@@ -1,6 +1,7 @@
-package discover
+package discover_test
 
 import (
+	"github.com/ssgo/discover"
 	"net"
 	"net/http"
 	"testing"
@@ -16,10 +17,10 @@ func TestBase(t *testing.T) {
 		http.Serve(l, nil)
 	}()
 
-	Start("127.0.0.1:18001", Config{
-		App: "s1",
-		Calls: map[string]*CallInfo{
-			"s1": &CallInfo{
+	discover.Start("127.0.0.1:18001", discover.Config{
+		App: "app1",
+		Calls: map[string]*discover.CallInfo{
+			"app1": &discover.CallInfo{
 				Headers: map[string]string{
 					"Access-Token": "xxxx",
 				},
@@ -29,8 +30,8 @@ func TestBase(t *testing.T) {
 	})
 
 	//time.Sleep(100 * time.Millisecond)
-	appClient := AppClient{}
-	node := appClient.Next("s1", nil)
+	appClient := discover.AppClient{}
+	node := appClient.Next("app1", nil)
 	if node == nil {
 		t.Error("node is nil ")
 	}
@@ -38,13 +39,19 @@ func TestBase(t *testing.T) {
 		t.Error(node.Addr, " != 127.0.0.1:18001")
 	}
 
-	caller := Caller{}
-	result := caller.Get("s1", "/").String()
+	caller := discover.Caller{}
+	result := caller.Get("app1", "/").String()
 	if result != "OK" {
 		t.Error(result, " != OK")
 	}
 
+	result = caller.Get("app2", "/").String()
+	if result == "OK" {
+		t.Error(result, " == OK")
+	}
+
 	l.Close()
-	Stop()
-	Wait()
+	discover.Stop()
+	discover.Wait()
 }
+

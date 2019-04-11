@@ -71,8 +71,7 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 				statusCode = r.Response.StatusCode
 			}
 			log.Error("DC", map[string]interface{}{
-				"type":       "callFailed",
-				"error":      r.Error,
+				"error":      "call failed: "+r.Error.Error(),
 				"app":        app,
 				"statusCode": statusCode,
 				"path":       path,
@@ -85,7 +84,7 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 			node.FailedTimes++
 			if node.FailedTimes >= config.CallRetryTimes {
 				log.Error("DC", map[string]interface{}{
-					"type":        "removed",
+					"error":       fmt.Sprint("call failed on ", node.FailedTimes, " times"),
 					"app":         app,
 					"addr":        node.Addr,
 					"path":        path,
@@ -96,7 +95,6 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 					"failedTimes": node.FailedTimes,
 					"retryLimit":  config.CallRetryTimes,
 					"statusCode":  statusCode,
-					"error":       r.Error,
 				})
 				//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, config.CallRetryTimes, statusCode, r.Error)
 				if clientRedisPool.HDEL(config.RegistryPrefix+app, node.Addr) > 0 {
