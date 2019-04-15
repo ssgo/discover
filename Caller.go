@@ -2,6 +2,7 @@ package discover
 
 import (
 	"fmt"
+	"github.com/ssgo/standard"
 	"net/http"
 	"time"
 
@@ -43,6 +44,11 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 		}
 	}
 
+	if isServer {
+		headers = append(headers, standard.DiscoverHeaderFromApp, config.App)
+		headers = append(headers, standard.DiscoverHeaderFromNode, myAddr)
+	}
+
 	var r *httpclient.Result
 	appClient := AppClient{}
 	for {
@@ -71,7 +77,7 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 				statusCode = r.Response.StatusCode
 			}
 			log.Error("DC", map[string]interface{}{
-				"error":      "call failed: "+r.Error.Error(),
+				"error":      "call failed: " + r.Error.Error(),
 				"app":        app,
 				"statusCode": statusCode,
 				"path":       path,
