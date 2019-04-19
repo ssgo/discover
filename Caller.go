@@ -12,6 +12,7 @@ import (
 
 type Caller struct {
 	Request *http.Request
+	NoBody  bool
 }
 
 func (caller *Caller) Get(app, path string, headers ...string) *httpclient.Result {
@@ -63,6 +64,9 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 		scheme := "http"
 		if appConf.WithSSL {
 			scheme += "s"
+		}
+		if appClientPools[app].NoBody != caller.NoBody {
+			appClientPools[app].NoBody = caller.NoBody
 		}
 		if caller.Request == nil {
 			r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, headers...)
