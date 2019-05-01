@@ -46,7 +46,7 @@ func (appClient *AppClient) NextWithNode(app, withNode string, request *http.Req
 	var node *NodeInfo
 	nodes := make([]*NodeInfo, 0)
 	for _, node := range appNodes[app] {
-		if appClient.excludes[node.Addr] || node.FailedTimes >= config.CallRetryTimes {
+		if appClient.excludes[node.Addr] || node.FailedTimes >= Config.CallRetryTimes {
 			continue
 		}
 		nodes = append(nodes, node)

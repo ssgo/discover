@@ -2,6 +2,7 @@ package discover
 
 import (
 	"fmt"
+	"github.com/ssgo/config"
 	"github.com/ssgo/log"
 	"github.com/ssgo/u"
 	"strconv"
@@ -31,7 +32,7 @@ type NodeInfo struct {
 	Addr        string
 	Weight      int
 	UsedTimes   uint64
-	FailedTimes uint8
+	FailedTimes int
 	Data        interface{}
 }
 
@@ -47,12 +48,13 @@ func IsClient() bool {
 }
 
 var logger = log.New(u.ShortUniqueId())
+var inited = false
 
 func logError(error string, extra ...interface{}) {
 	if extra == nil {
 		extra = make([]interface{}, 0)
 	}
-	extra = append(extra, "app", config.App, "addr", myAddr, "weight", config.Weight)
+	extra = append(extra, "app", Config.App, "addr", myAddr, "weight", Config.Weight)
 	logger.Error("Discover: "+error, extra...)
 }
 
@@ -60,45 +62,52 @@ func logInfo(info string, extra ...interface{}) {
 	if extra == nil {
 		extra = make([]interface{}, 0)
 	}
-	extra = append(extra, "app", config.App, "addr", myAddr, "weight", config.Weight)
+	extra = append(extra, "app", Config.App, "addr", myAddr, "weight", Config.Weight)
 	logger.Info("Discover: "+info, extra...)
 }
 
-func Start(addr string, conf Config) bool {
+func Init() {
+	if !inited {
+		inited = true
+		config.LoadConfig("discover", &Config)
+	}
+}
+
+func Start(addr string) bool {
+	Init()
 	myAddr = addr
-	config = conf
 
-	if config.CallTimeout <= 0 {
-		config.CallTimeout = 5000
-	}
-
-	if config.Registry == "" {
-		config.Registry = "discover:15"
-	}
-	if config.RegistryCalls == "" {
-		config.RegistryCalls = config.Registry
-	}
-	if config.CallRetryTimes <= 0 {
-		config.CallRetryTimes = 10
+	if Config.CallTimeout <= 0 {
+		Config.CallTimeout = 5000
 	}
 
-	if config.App != "" && config.App[0] == '_' {
+	if Config.Registry == "" {
+		Config.Registry = "discover:15"
+	}
+	if Config.RegistryCalls == "" {
+		Config.RegistryCalls = Config.Registry
+	}
+	if Config.CallRetryTimes <= 0 {
+		Config.CallRetryTimes = 10
+	}
+
+	if Config.App != "" && Config.App[0] == '_' {
 		logError("bad app name")
-		config.App = ""
+		Config.App = ""
 	}
 
-	if config.Weight <= 0 {
-		config.Weight = 1
+	if Config.Weight <= 0 {
+		Config.Weight = 1
 	}
 
-	isServer = config.App != "" && config.Weight > 0
+	isServer = Config.App != "" && Config.Weight > 0
 	if isServer {
-		serverRedisPool = redis.GetRedis(config.Registry, logger)
+		serverRedisPool = redis.GetRedis(Config.Registry, logger)
 
 		// 注册节点
-		if serverRedisPool.HSET(config.RegistryPrefix+config.App, addr, config.Weight) {
+		if serverRedisPool.HSET(Config.RegistryPrefix+Config.App, addr, Config.Weight) {
 			logInfo("registered")
-			serverRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+config.App, fmt.Sprintf("%s %d", addr, config.Weight))
+			serverRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+Config.App, fmt.Sprintf("%s %d", addr, Config.Weight))
 			daemonRunning = true
 			go daemon()
 		} else {
@@ -107,8 +116,8 @@ func Start(addr string, conf Config) bool {
 		}
 	}
 
-	if len(config.Calls) > 0 {
-		for app, conf := range config.Calls {
+	if Config.Calls != nil && len(Config.Calls) > 0 {
+		for app, conf := range Config.Calls {
 			addApp(app, *conf, false)
 		}
 		if Restart() == false {
@@ -128,12 +137,12 @@ func daemon() {
 				break
 			}
 		}
-		if isServer && !serverRedisPool.HEXISTS(config.RegistryPrefix+config.App, myAddr) {
+		if isServer && !serverRedisPool.HEXISTS(Config.RegistryPrefix+Config.App, myAddr) {
 			logInfo("lost app registered info")
 			// 注册节点
-			if serverRedisPool.HSET(config.RegistryPrefix+config.App, myAddr, config.Weight) {
+			if serverRedisPool.HSET(Config.RegistryPrefix+Config.App, myAddr, Config.Weight) {
 				logInfo("registered on daemon")
-				serverRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+config.App, fmt.Sprintf("%s %d", myAddr, config.Weight))
+				serverRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, Config.Weight))
 			} else {
 				logError("register failed on daemon")
 			}
@@ -152,7 +161,7 @@ func daemon() {
 
 func Restart() bool {
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(config.RegistryCalls, logger)
+		clientRedisPool = redis.GetRedis(Config.RegistryCalls, logger)
 	}
 
 	confForPubSub := *clientRedisPool.Config
@@ -216,22 +225,22 @@ func Stop() {
 
 	if isServer {
 		daemonRunning = false
-		if serverRedisPool.HDEL(config.RegistryPrefix+config.App, myAddr) > 0 {
+		if serverRedisPool.HDEL(Config.RegistryPrefix+Config.App, myAddr) > 0 {
 			logInfo("unregistered", "appSubscribeKeys", appSubscribeKeys)
-			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", config.App, myAddr, 0)
-			serverRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+config.App, fmt.Sprintf("%s %d", myAddr, 0))
+			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", Config.App, myAddr, 0)
+			serverRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, 0))
 		}
 	}
 }
 
 func Wait() {
 	if isClient {
-		logInfo("DC", "info", "waiting for client close")
+		logInfo("waiting for client close")
 		if syncerStopChan != nil {
 			<-syncerStopChan
 			syncerStopChan = nil
 		}
-		logInfo("DC", "info", "client close done")
+		logInfo("client close done")
 		//if pingStopChan != nil {
 		//	<-pingStopChan
 		//	pingStopChan = nil
@@ -239,12 +248,12 @@ func Wait() {
 	}
 
 	if isServer {
-		logInfo("DC", "info", "waiting for server close")
+		logInfo("waiting for server close")
 		if daemonStopChan != nil {
 			<-daemonStopChan
 			daemonStopChan = nil
 		}
-		logInfo("DC", "info", "server close done")
+		logInfo("server close done")
 	}
 }
 
@@ -256,19 +265,19 @@ func addApp(app string, conf CallInfo, fetch bool) bool {
 	if appClientPools[app] != nil {
 		return false
 	}
-	if len(config.Calls) == 0 {
-		config.Calls = make(map[string]*CallInfo)
+	if len(Config.Calls) == 0 {
+		Config.Calls = make(map[string]*CallInfo)
 	}
-	if config.Calls[app] == nil {
-		config.Calls[app] = &conf
+	if Config.Calls[app] == nil {
+		Config.Calls[app] = &conf
 	}
 
 	appNodes[app] = map[string]*NodeInfo{}
-	appSubscribeKeys = append(appSubscribeKeys, config.RegistryPrefix+"CH_"+app)
+	appSubscribeKeys = append(appSubscribeKeys, Config.RegistryPrefix+"CH_"+app)
 
 	timeout := conf.Timeout
 	if timeout <= 0 {
-		timeout = config.CallTimeout
+		timeout = Config.CallTimeout
 	}
 	var cp *httpclient.ClientPool
 	if conf.HttpVersion == 1 {
@@ -290,10 +299,10 @@ var syncConn *redigo.PubSubConn
 
 func fetchApp(app string) {
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(config.RegistryCalls, logger)
+		clientRedisPool = redis.GetRedis(Config.RegistryCalls, logger)
 	}
 
-	appResults := clientRedisPool.Do("HGETALL", config.RegistryPrefix+app).ResultMap()
+	appResults := clientRedisPool.Do("HGETALL", Config.RegistryPrefix+app).ResultMap()
 	for _, node := range appNodes[app] {
 		if appResults[node.Addr] == nil {
 			logInfo("remove node", "node", node, "nodes", appNodes[app])
@@ -317,7 +326,7 @@ func syncDiscover(initedChan chan bool) {
 		if err != nil {
 			logError(err.Error(), "appSubscribeKeys", appSubscribeKeys)
 			//log.Print("REDIS SUBSCRIBE	", err)
-			syncConn.Close()
+			_ = syncConn.Close()
 			syncConn = nil
 
 			if !inited {
@@ -334,7 +343,7 @@ func syncDiscover(initedChan chan bool) {
 		}
 
 		// 第一次或断线后重新获取（订阅开始后再获取全量确保信息完整）
-		for app := range config.Calls {
+		for app := range Config.Calls {
 			fetchApp(app)
 		}
 		if !inited {
@@ -357,7 +366,7 @@ func syncDiscover(initedChan chan bool) {
 				if len(a) == 2 {
 					weight, _ = strconv.Atoi(a[1])
 				}
-				app := strings.Replace(v.Channel, config.RegistryPrefix+"CH_", "", 1)
+				app := strings.Replace(v.Channel, Config.RegistryPrefix+"CH_", "", 1)
 				logInfo("received new registered info", "nodes", appNodes[app], "appSubscribeKeys", appSubscribeKeys)
 				//log.Printf("DISCOVER	Received	%s	%s	%d", app, addr, weight)
 				pushNode(app, addr, weight)
@@ -389,10 +398,10 @@ func syncDiscover(initedChan chan bool) {
 	}
 
 	if syncConn != nil {
-		syncConn.Unsubscribe(appSubscribeKeys)
+		_ = syncConn.Unsubscribe(appSubscribeKeys)
 		//考虑goroutine的并发性，再做一次判断
 		if syncConn != nil {
-			syncConn.Close()
+			_ = syncConn.Close()
 			syncConn = nil
 		}
 	}

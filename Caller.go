@@ -47,18 +47,18 @@ func (caller *Caller) Do(method, app, path string, data interface{}, headers ...
 	return r
 }
 func (caller *Caller) DoWithNode(method, app, withNode, path string, data interface{}, headers ...string) (*httpclient.Result, string) {
-	appConf := config.Calls[app]
+	appConf := Config.Calls[app]
 	if headers == nil {
 		headers = []string{}
 	}
 	if appConf != nil && appConf.Headers != nil {
 		for k, v := range appConf.Headers {
-			headers = append(headers, k, v)
+			headers = append(headers, k, *v)
 		}
 	}
 
 	if isServer {
-		headers = append(headers, standard.DiscoverHeaderFromApp, config.App)
+		headers = append(headers, standard.DiscoverHeaderFromApp, Config.App)
 		headers = append(headers, standard.DiscoverHeaderFromNode, myAddr)
 	}
 
@@ -100,10 +100,10 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 				"node", node,
 				"nodes", appNodes[app],
 			)
-			//log.Printf("DISCOVER	Failed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, config.CallRetryTimes, statusCode, r.Error)
+			//log.Printf("DISCOVER	Failed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
 			// 错误处理
 			node.FailedTimes++
-			if node.FailedTimes >= config.CallRetryTimes {
+			if node.FailedTimes >= Config.CallRetryTimes {
 				caller.logError(fmt.Sprint("call failed on ", node.FailedTimes, " times"),
 					"app", app,
 					"addr", node.Addr,
@@ -113,12 +113,12 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 					"tryTimes", appClient.tryTimes,
 					"appNum", len(appNodes[app]),
 					"failedTimes", node.FailedTimes,
-					"retryLimit", config.CallRetryTimes,
+					"retryLimit", Config.CallRetryTimes,
 					"statusCode", statusCode,
 				)
-				//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, config.CallRetryTimes, statusCode, r.Error)
-				if clientRedisPool.HDEL(config.RegistryPrefix+app, node.Addr) > 0 {
-					clientRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))
+				//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
+				if clientRedisPool.HDEL(Config.RegistryPrefix+app, node.Addr) > 0 {
+					clientRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))
 				}
 			}
 		} else {

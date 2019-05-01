@@ -19,37 +19,38 @@ func TestBase(t *testing.T) {
 		_ = http.Serve(l, nil)
 	}()
 
-	discover.Start("127.0.0.1:18001", discover.Config{
-		App: "app1",
-		Calls: map[string]*discover.CallInfo{
-			"app1": &discover.CallInfo{
-				Headers: map[string]string{
-					"Access-Token": "xxxx",
-				},
-				HttpVersion: 1,
+	discover.Config.App = "app1"
+	accessToken := "xxxx"
+	discover.Config.Calls = map[string]*discover.CallInfo{
+		"app1": {
+			Headers: map[string]*string{
+				"Access-Token": &accessToken,
 			},
+			HttpVersion: 1,
 		},
-	})
+	}
+
+	discover.Start("127.0.0.1:18001")
 
 	//time.Sleep(100 * time.Millisecond)
 	appClient := discover.AppClient{}
 	node := appClient.Next("app1", nil)
 	if node == nil {
-		t.Error("node is nil ")
+		t.Fatal("node is nil ")
 	}
 	if node.Addr != "127.0.0.1:18001" {
-		t.Error(node.Addr, " != 127.0.0.1:18001")
+		t.Fatal(node.Addr, " != 127.0.0.1:18001")
 	}
 
 	caller := discover.NewCaller(nil, log.New(u.ShortUniqueId()))
 	result := caller.Get("app1", "/").String()
 	if result != "OK" {
-		t.Error(result, " != OK")
+		t.Fatal(result, " != OK")
 	}
 
 	result = caller.Get("app2", "/").String()
 	if result == "OK" {
-		t.Error(result, " == OK")
+		t.Fatal(result, " == OK")
 	}
 
 	_ = l.Close()
