@@ -3,6 +3,7 @@ package discover
 import (
 	"fmt"
 	"github.com/ssgo/log"
+	"github.com/ssgo/u"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,24 @@ func IsClient() bool {
 	return isClient
 }
 
+var logger = log.New(u.ShortUniqueId())
+
+func logError(error string, extra ...interface{}) {
+	if extra == nil {
+		extra = make([]interface{}, 0)
+	}
+	extra = append(extra, "app", config.App, "addr", myAddr, "weight", config.Weight)
+	logger.Error("Discover: "+error, extra...)
+}
+
+func logInfo(info string, extra ...interface{}) {
+	if extra == nil {
+		extra = make([]interface{}, 0)
+	}
+	extra = append(extra, "app", config.App, "addr", myAddr, "weight", config.Weight)
+	logger.Info("Discover: "+info, extra...)
+}
+
 func Start(addr string, conf Config) bool {
 	myAddr = addr
 	config = conf
@@ -64,10 +83,7 @@ func Start(addr string, conf Config) bool {
 	}
 
 	if config.App != "" && config.App[0] == '_' {
-		log.Error("DC", map[string]interface{}{
-			"error": "bad app name",
-			"app":   config.App,
-		})
+		logError("bad app name")
 		config.App = ""
 	}
 
@@ -77,26 +93,16 @@ func Start(addr string, conf Config) bool {
 
 	isServer = config.App != "" && config.Weight > 0
 	if isServer {
-		serverRedisPool = redis.GetRedis(config.Registry)
+		serverRedisPool = redis.GetRedis(config.Registry, logger)
 
 		// 注册节点
 		if serverRedisPool.HSET(config.RegistryPrefix+config.App, addr, config.Weight) {
-			log.Info("DC", map[string]interface{}{
-				"info":   "registered",
-				"app":    config.App,
-				"addr":   addr,
-				"weight": config.Weight,
-			})
+			logInfo("registered")
 			serverRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+config.App, fmt.Sprintf("%s %d", addr, config.Weight))
 			daemonRunning = true
 			go daemon()
 		} else {
-			log.Error("DC", map[string]interface{}{
-				"error":  "register failed",
-				"app":    config.App,
-				"addr":   addr,
-				"weight": config.Weight,
-			})
+			logError("register failed")
 			return false
 		}
 	}
@@ -113,12 +119,7 @@ func Start(addr string, conf Config) bool {
 }
 
 func daemon() {
-	log.Info("DC", map[string]interface{}{
-		"info":   "daemon thread started",
-		"app":    config.App,
-		"addr":   myAddr,
-		"weight": config.Weight,
-	})
+	logInfo("daemon thread started")
 
 	for {
 		for i := 0; i < 10; i++ {
@@ -128,28 +129,13 @@ func daemon() {
 			}
 		}
 		if isServer && !serverRedisPool.HEXISTS(config.RegistryPrefix+config.App, myAddr) {
-			log.Info("DC", map[string]interface{}{
-				"info":   "lost app registered info",
-				"app":    config.App,
-				"addr":   myAddr,
-				"weight": config.Weight,
-			})
+			logInfo("lost app registered info")
 			// 注册节点
 			if serverRedisPool.HSET(config.RegistryPrefix+config.App, myAddr, config.Weight) {
-				log.Info("DC", map[string]interface{}{
-					"info":   "registered on daemon",
-					"app":    config.App,
-					"addr":   myAddr,
-					"weight": config.Weight,
-				})
+				logInfo("registered on daemon")
 				serverRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+config.App, fmt.Sprintf("%s %d", myAddr, config.Weight))
 			} else {
-				log.Error("DC", map[string]interface{}{
-					"error":  "register failed on daemon",
-					"app":    config.App,
-					"addr":   myAddr,
-					"weight": config.Weight,
-				})
+				logError("register failed on daemon")
 			}
 		}
 		if !daemonRunning {
@@ -157,12 +143,7 @@ func daemon() {
 		}
 	}
 
-	log.Info("DC", map[string]interface{}{
-		"info":   "daemon thread stopped",
-		"app":    config.App,
-		"addr":   myAddr,
-		"weight": config.Weight,
-	})
+	logInfo("daemon thread stopped")
 
 	if daemonStopChan != nil {
 		daemonStopChan <- true
@@ -170,22 +151,16 @@ func daemon() {
 }
 
 func Restart() bool {
-	//log.Info("DC", map[string]interface{}{
-	//	"info":             "restarting",
-	//	"app":              config.App,
-	//	"addr":             myAddr,
-	//	"weight":           config.Weight,
-	//	"appSubscribeKeys": appSubscribeKeys,
-	//})
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(config.RegistryCalls)
+		clientRedisPool = redis.GetRedis(config.RegistryCalls, logger)
 	}
 
 	confForPubSub := *clientRedisPool.Config
 	confForPubSub.IdleTimeout = -1
 	confForPubSub.ReadTimeout = -1
 	if pubsubRedisPool == nil {
-		pubsubRedisPool = redis.NewRedis(&confForPubSub)
+		newLogger := logger.New(u.ShortUniqueId())
+		pubsubRedisPool = redis.NewRedis(&confForPubSub, newLogger)
 	}
 
 	if isClient == false {
@@ -194,49 +169,25 @@ func Restart() bool {
 
 	// 如果之前没有启动
 	if syncConn != nil {
-		log.Info("DC", map[string]interface{}{
-			"info":             "stopping",
-			"app":              config.App,
-			"addr":             myAddr,
-			"weight":           config.Weight,
-			"appSubscribeKeys": appSubscribeKeys,
-		})
+		logInfo("stopping", "appSubscribeKeys", appSubscribeKeys)
 		//log.Print("DISCOVER	stopping")
-		syncConn.Unsubscribe(appSubscribeKeys)
-		syncConn.Close()
+		_ = syncConn.Unsubscribe(appSubscribeKeys)
+		_ = syncConn.Close()
 		syncConn = nil
-		log.Info("DC", map[string]interface{}{
-			"info":             "stopped",
-			"app":              config.App,
-			"addr":             myAddr,
-			"weight":           config.Weight,
-			"appSubscribeKeys": appSubscribeKeys,
-		})
+		logInfo("stopped", "appSubscribeKeys", appSubscribeKeys)
 		//log.Print("DISCOVER	stopped")
 	}
 
 	// 如果之前没有启动
 	if syncerRunning == false {
-		log.Info("DC", map[string]interface{}{
-			"info":             "starting",
-			"app":              config.App,
-			"addr":             myAddr,
-			"weight":           config.Weight,
-			"appSubscribeKeys": appSubscribeKeys,
-		})
+		logInfo("starting", "appSubscribeKeys", appSubscribeKeys)
 		//log.Print("DISCOVER	starting")
 		syncerRunning = true
 		initedChan := make(chan bool)
 		go syncDiscover(initedChan)
 		<-initedChan
 		//go pingRedis()
-		log.Info("DC", map[string]interface{}{
-			"info":             "started",
-			"app":              config.App,
-			"addr":             myAddr,
-			"weight":           config.Weight,
-			"appSubscribeKeys": appSubscribeKeys,
-		})
+		logInfo("started", "appSubscribeKeys", appSubscribeKeys)
 		//log.Print("DISCOVER	started")
 	}
 	return true
@@ -246,34 +197,16 @@ func Stop() {
 	if isClient {
 		syncerRunning = false
 		if syncConn != nil {
-			log.Info("DC", map[string]interface{}{
-				"info":             "unsubscribing",
-				"app":              config.App,
-				"addr":             myAddr,
-				"weight":           config.Weight,
-				"appSubscribeKeys": appSubscribeKeys,
-			})
+			logInfo("unsubscribing", "appSubscribeKeys", appSubscribeKeys)
 			tmpConn := syncConn
 			syncConn = nil
 			//log.Print("DISCOVER	unsubscribing	", appSubscribeKeys)
-			tmpConn.Unsubscribe(appSubscribeKeys)
-			log.Info("DC", map[string]interface{}{
-				"info":             "closing sync connection",
-				"app":              config.App,
-				"addr":             myAddr,
-				"weight":           config.Weight,
-				"appSubscribeKeys": appSubscribeKeys,
-			})
+			_ = tmpConn.Unsubscribe(appSubscribeKeys)
+			logInfo("closing sync connection", "appSubscribeKeys", appSubscribeKeys)
 			//log.Print("DISCOVER	closing syncConn")
 			go func() {
-				tmpConn.Close()
-				log.Info("DC", map[string]interface{}{
-					"info":             "sync connection closed",
-					"app":              config.App,
-					"addr":             myAddr,
-					"weight":           config.Weight,
-					"appSubscribeKeys": appSubscribeKeys,
-				})
+				_ = tmpConn.Close()
+				logInfo("sync connection closed", "appSubscribeKeys", appSubscribeKeys)
 				//syncerStopChan <- true
 				//pingStopChan <- true
 				//log.Print("DISCOVER	closed syncConn")
@@ -284,13 +217,7 @@ func Stop() {
 	if isServer {
 		daemonRunning = false
 		if serverRedisPool.HDEL(config.RegistryPrefix+config.App, myAddr) > 0 {
-			log.Info("DC", map[string]interface{}{
-				"info":             "unregistered",
-				"app":              config.App,
-				"addr":             myAddr,
-				"weight":           config.Weight,
-				"appSubscribeKeys": appSubscribeKeys,
-			})
+			logInfo("unregistered", "appSubscribeKeys", appSubscribeKeys)
 			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", config.App, myAddr, 0)
 			serverRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+config.App, fmt.Sprintf("%s %d", myAddr, 0))
 		}
@@ -299,12 +226,12 @@ func Stop() {
 
 func Wait() {
 	if isClient {
-		log.Info("DC", "info", "waiting for client close")
+		logInfo("DC", "info", "waiting for client close")
 		if syncerStopChan != nil {
 			<-syncerStopChan
 			syncerStopChan = nil
 		}
-		log.Info("DC", "info", "client close done")
+		logInfo("DC", "info", "client close done")
 		//if pingStopChan != nil {
 		//	<-pingStopChan
 		//	pingStopChan = nil
@@ -312,12 +239,12 @@ func Wait() {
 	}
 
 	if isServer {
-		log.Info("DC", "info", "waiting for server close")
+		logInfo("DC", "info", "waiting for server close")
 		if daemonStopChan != nil {
 			<-daemonStopChan
 			daemonStopChan = nil
 		}
-		log.Info("DC", "info", "server close done")
+		logInfo("DC", "info", "server close done")
 	}
 }
 
@@ -361,93 +288,22 @@ func addApp(app string, conf CallInfo, fetch bool) bool {
 
 var syncConn *redigo.PubSubConn
 
-//// 保持 redis 链接，否则会因为超时而发生错误
-//func pingRedis() {
-//	n := 15
-//	if clientRedisPool.ReadTimeout > 2000 {
-//		n = clientRedisPool.ReadTimeout / 1000 / 2
-//	} else if clientRedisPool.ReadTimeout > 0 {
-//		n = 1
-//	}
-//	for {
-//		for i := 0; i < n; i++ {
-//			time.Sleep(time.Second * 1)
-//			if !syncerRunning {
-//				break
-//			}
-//		}
-//		if !syncerRunning {
-//			break
-//		}
-//		if syncConn != nil {
-//			//syncConn.Ping("1")
-//		}
-//		if !syncerRunning {
-//			break
-//		}
-//		if isServer && !serverRedisPool.HEXISTS(config.RegistryPrefix+config.App, myAddr) {
-//			log.Info("DC", map[string]interface{}{
-//				"info":   "lost app registered info",
-//				"app":    config.App,
-//				"addr":   myAddr,
-//				"weight": config.Weight,
-//			})
-//			// 注册节点
-//			if serverRedisPool.HSET(config.RegistryPrefix+config.App, myAddr, config.Weight) {
-//				log.Info("DC", map[string]interface{}{
-//					"info":   "registered",
-//					"app":    config.App,
-//					"addr":   myAddr,
-//					"weight": config.Weight,
-//				})
-//				serverRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+config.App, fmt.Sprintf("%s %d", myAddr, config.Weight))
-//			} else {
-//				log.Error("DC", map[string]interface{}{
-//					"error":  "register failed",
-//					"app":    config.App,
-//					"addr":   myAddr,
-//					"weight": config.Weight,
-//				})
-//			}
-//		}
-//		if !syncerRunning {
-//			break
-//		}
-//	}
-//	//if pingStopChan != nil {
-//	//	pingStopChan <- true
-//	//}
-//}
-
 func fetchApp(app string) {
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(config.RegistryCalls)
+		clientRedisPool = redis.GetRedis(config.RegistryCalls, logger)
 	}
 
 	appResults := clientRedisPool.Do("HGETALL", config.RegistryPrefix+app).ResultMap()
 	for _, node := range appNodes[app] {
 		if appResults[node.Addr] == nil {
-			log.Info("DC", map[string]interface{}{
-				"info":   "remove node",
-				"app":    app,
-				"addr":   node.Addr,
-				"weight": node.Weight,
-				"node":   node,
-				"nodes":  appNodes[app],
-			})
+			logInfo("remove node", "node", node, "nodes", appNodes[app])
 			//log.Printf("DISCOVER	Remove When Reset	%s	%s	%d", app, node.Addr, 0)
 			pushNode(app, node.Addr, 0)
 		}
 	}
 	for addr, weightResult := range appResults {
 		weight := weightResult.Int()
-		log.Info("DC", map[string]interface{}{
-			"info":   "update node",
-			"app":    app,
-			"addr":   addr,
-			"weight": weight,
-			"nodes":  appNodes[app],
-		})
+		logInfo("update node", "nodes", appNodes[app])
 		//log.Printf("DISCOVER	Reset	%s	%s	%d", app, addr, weight)
 		pushNode(app, addr, weight)
 	}
@@ -459,21 +315,13 @@ func syncDiscover(initedChan chan bool) {
 		syncConn = &redigo.PubSubConn{Conn: pubsubRedisPool.GetConnection()}
 		err := syncConn.Subscribe(appSubscribeKeys...)
 		if err != nil {
-			log.Error("DC", map[string]interface{}{
-				"error":            err.Error(),
-				"appSubscribeKeys": appSubscribeKeys,
-			})
+			logError(err.Error(), "appSubscribeKeys", appSubscribeKeys)
 			//log.Print("REDIS SUBSCRIBE	", err)
 			syncConn.Close()
 			syncConn = nil
 
 			if !inited {
-				log.Info("DC", map[string]interface{}{
-					"info":   "sync thread started",
-					"app":    config.App,
-					"addr":   myAddr,
-					"weight": config.Weight,
-				})
+				logInfo("sync thread started")
 
 				inited = true
 				initedChan <- true
@@ -488,18 +336,6 @@ func syncDiscover(initedChan chan bool) {
 		// 第一次或断线后重新获取（订阅开始后再获取全量确保信息完整）
 		for app := range config.Calls {
 			fetchApp(app)
-			//appResults := clientRedisPool.Do("HGETALL", config.RegistryPrefix+app).ResultMap()
-			//for _, node := range appNodes[app] {
-			//	if appResults[node.Addr] == nil {
-			//		log.Printf("DISCOVER	Remove When Reset	%s	%s	%d", app, node.Addr, 0)
-			//		pushNode(app, node.Addr, 0)
-			//	}
-			//}
-			//for addr, weightResult := range appResults {
-			//	weight := weightResult.Int()
-			//	log.Printf("DISCOVER	Reset	%s	%s	%d", app, addr, weight)
-			//	pushNode(app, addr, weight)
-			//}
 		}
 		if !inited {
 			inited = true
@@ -522,13 +358,7 @@ func syncDiscover(initedChan chan bool) {
 					weight, _ = strconv.Atoi(a[1])
 				}
 				app := strings.Replace(v.Channel, config.RegistryPrefix+"CH_", "", 1)
-				log.Info("DC", map[string]interface{}{
-					"info":             "received new registered info",
-					"app":              app,
-					"weight":           weight,
-					"nodes":            appNodes[app],
-					"appSubscribeKeys": appSubscribeKeys,
-				})
+				logInfo("received new registered info", "nodes", appNodes[app], "appSubscribeKeys", appSubscribeKeys)
 				//log.Printf("DISCOVER	Received	%s	%s	%d", app, addr, weight)
 				pushNode(app, addr, weight)
 			case redigo.Subscription:
@@ -536,10 +366,7 @@ func syncDiscover(initedChan chan bool) {
 				//log.Print("	-0-0-0-0-0-0-	Pong")
 			case error:
 				if !strings.Contains(v.Error(), "connection closed") {
-					log.Info("DC", map[string]interface{}{
-						"error":            v.Error(),
-						"appSubscribeKeys": appSubscribeKeys,
-					})
+					logInfo(v.Error(), "appSubscribeKeys", appSubscribeKeys)
 					//log.Printf("REDIS RECEIVE ERROR	%s", v)
 				}
 				isErr = true
@@ -570,12 +397,7 @@ func syncDiscover(initedChan chan bool) {
 		}
 	}
 
-	log.Info("DC", map[string]interface{}{
-		"info":   "sync thread stopped",
-		"app":    config.App,
-		"addr":   myAddr,
-		"weight": config.Weight,
-	})
+	logInfo("sync thread stopped")
 
 	if syncerStopChan != nil {
 		syncerStopChan <- true

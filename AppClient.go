@@ -9,6 +9,14 @@ import (
 type AppClient struct {
 	excludes map[string]bool
 	tryTimes int
+	logger   *log.Logger
+}
+
+func (appClient *AppClient) logError(error string, extra ...interface{}) {
+	if appClient.logger == nil {
+		appClient.logger = log.DefaultLogger
+	}
+	appClient.logger.Error("Discover Client: "+error, extra...)
 }
 
 func (appClient *AppClient) Next(app string, request *http.Request) *NodeInfo {
@@ -21,20 +29,11 @@ func (appClient *AppClient) NextWithNode(app, withNode string, request *http.Req
 	}
 
 	if appNodes[app] == nil {
-		log.Warning("DC", map[string]interface{}{
-			"warning": "app not found",
-			"app":     app,
-		})
-		//log.Printf("DISCOVER	No App	%s", app)
+		appClient.logError("app not found", "app", app)
 		return nil
 	}
 	if len(appNodes[app]) == 0 {
-		log.Warning("DC", map[string]interface{}{
-			"warning": "node not found",
-			"app":     app,
-			"nodes":   appNodes[app],
-		})
-		//log.Printf("DISCOVER	No Node	%s	%d", app, len(appNodes[app]))
+		appClient.logError("node not found", "app", app, "nodes", appNodes[app])
 		return nil
 	}
 
@@ -66,13 +65,7 @@ func (appClient *AppClient) NextWithNode(app, withNode string, request *http.Req
 		appClient.excludes[node.Addr] = true
 	}
 	if node == nil {
-		log.Warning("DC", map[string]interface{}{
-			"warning":  "node not found",
-			"app":      app,
-			"tryTimes": appClient.tryTimes,
-			"nodes":    appNodes[app],
-		})
-		//log.Printf("DISCOVER	No Node	%s	%d / %d", app, appClient.tryTimes, len(appNodes[app]))
+		appClient.logError("node not found", "app", app, "tryTimes", appClient.tryTimes, "nodes", appNodes[app])
 	}
 
 	return node

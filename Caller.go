@@ -13,6 +13,18 @@ import (
 type Caller struct {
 	Request *http.Request
 	NoBody  bool
+	logger  *log.Logger
+}
+
+func NewCaller(request *http.Request, logger *log.Logger) *Caller {
+	return &Caller{Request: request, logger: logger}
+}
+
+func (caller *Caller) logError(error string, extra ...interface{}) {
+	if caller.logger == nil {
+		caller.logger = log.DefaultLogger
+	}
+	caller.logger.Error("Discover Caller: "+error, extra...)
 }
 
 func (caller *Caller) Get(app, path string, headers ...string) *httpclient.Result {
@@ -51,7 +63,7 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 	}
 
 	var r *httpclient.Result
-	appClient := AppClient{}
+	appClient := AppClient{logger: caller.logger}
 	for {
 		node := appClient.NextWithNode(app, withNode, caller.Request)
 		if node == nil {
@@ -80,32 +92,30 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 			if r.Response != nil {
 				statusCode = r.Response.StatusCode
 			}
-			log.Error("DC", map[string]interface{}{
-				"error":      "call failed: " + r.Error.Error(),
-				"app":        app,
-				"statusCode": statusCode,
-				"path":       path,
-				"tryTimes":   appClient.tryTimes,
-				"node":       node,
-				"nodes":      appNodes[app],
-			})
+			caller.logError(r.Error.Error(),
+				"app", app,
+				"statusCode", statusCode,
+				"path", path,
+				"tryTimes", appClient.tryTimes,
+				"node", node,
+				"nodes", appNodes[app],
+			)
 			//log.Printf("DISCOVER	Failed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, config.CallRetryTimes, statusCode, r.Error)
 			// 错误处理
 			node.FailedTimes++
 			if node.FailedTimes >= config.CallRetryTimes {
-				log.Error("DC", map[string]interface{}{
-					"error":       fmt.Sprint("call failed on ", node.FailedTimes, " times"),
-					"app":         app,
-					"addr":        node.Addr,
-					"path":        path,
-					"weight":      node.Weight,
-					"usedTimes":   node.UsedTimes,
-					"tryTimes":    appClient.tryTimes,
-					"appNum":      len(appNodes[app]),
-					"failedTimes": node.FailedTimes,
-					"retryLimit":  config.CallRetryTimes,
-					"statusCode":  statusCode,
-				})
+				caller.logError(fmt.Sprint("call failed on ", node.FailedTimes, " times"),
+					"app", app,
+					"addr", node.Addr,
+					"path", path,
+					"weight", node.Weight,
+					"usedTimes", node.UsedTimes,
+					"tryTimes", appClient.tryTimes,
+					"appNum", len(appNodes[app]),
+					"failedTimes", node.FailedTimes,
+					"retryLimit", config.CallRetryTimes,
+					"statusCode", statusCode,
+				)
 				//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, config.CallRetryTimes, statusCode, r.Error)
 				if clientRedisPool.HDEL(config.RegistryPrefix+app, node.Addr) > 0 {
 					clientRedisPool.Do("PUBLISH", config.RegistryPrefix+"CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))

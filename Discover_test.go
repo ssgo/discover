@@ -2,6 +2,8 @@ package discover_test
 
 import (
 	"github.com/ssgo/discover"
+	"github.com/ssgo/log"
+	"github.com/ssgo/u"
 	"net"
 	"net/http"
 	"testing"
@@ -11,10 +13,10 @@ func TestBase(t *testing.T) {
 
 	l, _ := net.Listen("tcp", ":18001")
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
-		writer.Write([]byte("OK"))
+		_, _ = writer.Write([]byte("OK"))
 	})
 	go func() {
-		http.Serve(l, nil)
+		_ = http.Serve(l, nil)
 	}()
 
 	discover.Start("127.0.0.1:18001", discover.Config{
@@ -39,7 +41,7 @@ func TestBase(t *testing.T) {
 		t.Error(node.Addr, " != 127.0.0.1:18001")
 	}
 
-	caller := discover.Caller{}
+	caller := discover.NewCaller(nil, log.New(u.ShortUniqueId()))
 	result := caller.Get("app1", "/").String()
 	if result != "OK" {
 		t.Error(result, " != OK")
@@ -50,8 +52,7 @@ func TestBase(t *testing.T) {
 		t.Error(result, " == OK")
 	}
 
-	l.Close()
+	_ = l.Close()
 	discover.Stop()
 	discover.Wait()
 }
-
