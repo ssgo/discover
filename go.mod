@@ -7,7 +7,7 @@ require (
 	github.com/ssgo/config v0.1.0
 	github.com/ssgo/httpclient v0.1.0
 	github.com/ssgo/log v0.1.1
-	github.com/ssgo/redis v0.1.0
+	github.com/ssgo/redis v0.1.1
 	github.com/ssgo/standard v0.1.0
 	github.com/ssgo/u v0.1.0
 )
