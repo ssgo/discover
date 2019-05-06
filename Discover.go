@@ -70,35 +70,35 @@ func Init() {
 	if !inited {
 		inited = true
 		config.LoadConfig("discover", &Config)
+
+		if Config.CallTimeout <= 0 {
+			Config.CallTimeout = 5000
+		}
+
+		if Config.Registry == "" {
+			Config.Registry = "discover:15"
+		}
+		if Config.RegistryCalls == "" {
+			Config.RegistryCalls = Config.Registry
+		}
+		if Config.CallRetryTimes <= 0 {
+			Config.CallRetryTimes = 10
+		}
+
+		if Config.App != "" && Config.App[0] == '_' {
+			logError("bad app name")
+			Config.App = ""
+		}
+
+		if Config.Weight <= 0 {
+			Config.Weight = 1
+		}
 	}
 }
 
 func Start(addr string) bool {
 	Init()
 	myAddr = addr
-
-	if Config.CallTimeout <= 0 {
-		Config.CallTimeout = 5000
-	}
-
-	if Config.Registry == "" {
-		Config.Registry = "discover:15"
-	}
-	if Config.RegistryCalls == "" {
-		Config.RegistryCalls = Config.Registry
-	}
-	if Config.CallRetryTimes <= 0 {
-		Config.CallRetryTimes = 10
-	}
-
-	if Config.App != "" && Config.App[0] == '_' {
-		logError("bad app name")
-		Config.App = ""
-	}
-
-	if Config.Weight <= 0 {
-		Config.Weight = 1
-	}
 
 	isServer = Config.App != "" && Config.Weight > 0
 	if isServer {
