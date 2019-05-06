@@ -29,7 +29,7 @@ func (appClient *AppClient) NextWithNode(app, withNode string, request *http.Req
 	}
 
 	if appNodes[app] == nil {
-		appClient.logError("app not found", "app", app)
+		appClient.logError("app not found", "app", app, "calls", Config.Calls)
 		return nil
 	}
 	if len(appNodes[app]) == 0 {
