@@ -47,15 +47,15 @@ func (caller *Caller) Do(method, app, path string, data interface{}, headers ...
 	return r
 }
 func (caller *Caller) DoWithNode(method, app, withNode, path string, data interface{}, headers ...string) (*httpclient.Result, string) {
-	appConf := Config.Calls[app]
+	//appConf := Config.Calls[app]
 	if headers == nil {
 		headers = []string{}
 	}
-	if appConf != nil && appConf.Headers != nil {
-		for k, v := range appConf.Headers {
-			headers = append(headers, k, *v)
-		}
-	}
+	//if appConf != nil && appConf.Headers != nil {
+	//	for k, v := range appConf.Headers {
+	//		headers = append(headers, k, *v)
+	//	}
+	//}
 
 	if isServer {
 		headers = append(headers, standard.DiscoverHeaderFromApp, Config.App)
@@ -74,9 +74,9 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 		startTime := time.Now()
 		node.UsedTimes++
 		scheme := "http"
-		if appConf.WithSSL {
-			scheme += "s"
-		}
+		//if appConf.WithSSL {
+		//	scheme += "s"
+		//}
 		if appClientPools[app].NoBody != caller.NoBody {
 			appClientPools[app].NoBody = caller.NoBody
 		}
@@ -117,8 +117,8 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 					"statusCode", statusCode,
 				)
 				//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
-				if clientRedisPool.HDEL(Config.RegistryPrefix+app, node.Addr) > 0 {
-					clientRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))
+				if clientRedisPool.HDEL(app, node.Addr) > 0 {
+					clientRedisPool.Do("PUBLISH", "CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))
 				}
 			}
 		} else {

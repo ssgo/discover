@@ -20,14 +20,8 @@ func TestBase(t *testing.T) {
 	}()
 
 	discover.Config.App = "app1"
-	accessToken := "xxxx"
-	discover.Config.Calls = map[string]*discover.CallInfo{
-		"app1": {
-			Headers: map[string]*string{
-				"Access-Token": &accessToken,
-			},
-			HttpVersion: 1,
-		},
+	discover.Config.Calls = map[string]string{
+		"app1": "5000:xxxx:1",
 	}
 
 	discover.Start("127.0.0.1:18001")

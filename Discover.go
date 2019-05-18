@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/ssgo/config"
 	"github.com/ssgo/log"
+	"github.com/ssgo/standard"
 	"github.com/ssgo/u"
 	"strconv"
 	"strings"
@@ -71,27 +72,20 @@ func Init() {
 		inited = true
 		config.LoadConfig("discover", &Config)
 
-		if Config.CallTimeout <= 0 {
-			Config.CallTimeout = 5000
-		}
-
 		if Config.Registry == "" {
-			Config.Registry = "discover:15"
-		}
-		if Config.RegistryCalls == "" {
-			Config.RegistryCalls = Config.Registry
+			Config.Registry = standard.DiscoverDefaultRegistry // 127.0.0.1:6379::15
 		}
 		if Config.CallRetryTimes <= 0 {
 			Config.CallRetryTimes = 10
 		}
 
-		if Config.App != "" && Config.App[0] == '_' {
-			logError("bad app name")
-			Config.App = ""
-		}
+		//if Config.App != "" && Config.App[0] == '_' {
+		//	logError("bad app name")
+		//	Config.App = ""
+		//}
 
 		if Config.Weight <= 0 {
-			Config.Weight = 1
+			Config.Weight = 100
 		}
 	}
 }
@@ -103,22 +97,27 @@ func Start(addr string) bool {
 	isServer = Config.App != "" && Config.Weight > 0
 	if isServer {
 		serverRedisPool = redis.GetRedis(Config.Registry, logger)
+		if serverRedisPool.Error != nil {
+			logError(serverRedisPool.Error.Error())
+		}
 
 		// 注册节点
-		if serverRedisPool.HSET(Config.RegistryPrefix+Config.App, addr, Config.Weight) {
+		if serverRedisPool.HSET(Config.App, addr, Config.Weight) {
+		//if r := serverRedisPool.Do("HSET " + Config.App, addr, Config.Weight); r.Error == nil {
 			logInfo("registered")
-			serverRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+Config.App, fmt.Sprintf("%s %d", addr, Config.Weight))
+			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", addr, Config.Weight))
 			daemonRunning = true
+			//fmt.Println("  ####1", r.Error, r.String())
 			go daemon()
 		} else {
-			logError("register failed")
-			return false
+			logError("register failed") // TODO ????????
+			//return false
 		}
 	}
 
 	if Config.Calls != nil && len(Config.Calls) > 0 {
 		for app, conf := range Config.Calls {
-			addApp(app, *conf, false)
+			addApp(app, conf, false)
 		}
 		if Restart() == false {
 			return false
@@ -137,12 +136,12 @@ func daemon() {
 				break
 			}
 		}
-		if isServer && !serverRedisPool.HEXISTS(Config.RegistryPrefix+Config.App, myAddr) {
+		if isServer && !serverRedisPool.HEXISTS(Config.App, myAddr) {
 			logInfo("lost app registered info")
 			// 注册节点
-			if serverRedisPool.HSET(Config.RegistryPrefix+Config.App, myAddr, Config.Weight) {
+			if serverRedisPool.HSET(Config.App, myAddr, Config.Weight) {
 				logInfo("registered on daemon")
-				serverRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, Config.Weight))
+				serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, Config.Weight))
 			} else {
 				logError("register failed on daemon")
 			}
@@ -161,7 +160,7 @@ func daemon() {
 
 func Restart() bool {
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(Config.RegistryCalls, logger)
+		clientRedisPool = redis.GetRedis(Config.Registry, logger)
 	}
 
 	confForPubSub := *clientRedisPool.Config
@@ -225,10 +224,10 @@ func Stop() {
 
 	if isServer {
 		daemonRunning = false
-		if serverRedisPool.HDEL(Config.RegistryPrefix+Config.App, myAddr) > 0 {
+		if serverRedisPool.HDEL(Config.App, myAddr) > 0 {
 			logInfo("unregistered", "appSubscribeKeys", appSubscribeKeys)
 			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", Config.App, myAddr, 0)
-			serverRedisPool.Do("PUBLISH", Config.RegistryPrefix+"CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, 0))
+			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, 0))
 		}
 	}
 }
@@ -257,33 +256,48 @@ func Wait() {
 	}
 }
 
-func AddExternalApp(app string, conf CallInfo) bool {
-	return addApp(app, conf, true)
+func AddExternalApp(app string, callInfo string) bool {
+	return addApp(app, callInfo, true)
 }
 
-func addApp(app string, conf CallInfo, fetch bool) bool {
+func addApp(app string, callInfo string, fetch bool) bool {
 	if appClientPools[app] != nil {
 		return false
 	}
-	if len(Config.Calls) == 0 {
-		Config.Calls = make(map[string]*CallInfo)
+	if Config.Calls == nil {
+		Config.Calls = make(map[string]string)
 	}
-	if Config.Calls[app] == nil {
-		Config.Calls[app] = &conf
+	if Config.Calls[app] == "" {
+		Config.Calls[app] = callInfo
 	}
 
 	appNodes[app] = map[string]*NodeInfo{}
-	appSubscribeKeys = append(appSubscribeKeys, Config.RegistryPrefix+"CH_"+app)
+	appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
 
-	timeout := conf.Timeout
-	if timeout <= 0 {
-		timeout = Config.CallTimeout
+	callInfoArr := u.SplitTrim(callInfo, ":")
+	callTimeout := u.Int(callInfo[0])
+	if callTimeout <= 0 {
+		callTimeout = 10000
 	}
+	callToken := ""
+	callHttpVersion := 2
+	if len(callInfoArr) > 1 {
+		callToken = callInfoArr[1]
+	}
+	if len(callInfoArr) > 2 {
+		if callInfoArr[2] == "1" {
+			callHttpVersion = 1
+		}
+	}
+
 	var cp *httpclient.ClientPool
-	if conf.HttpVersion == 1 {
-		cp = httpclient.GetClient(time.Duration(timeout) * time.Millisecond)
+	if callHttpVersion == 1 {
+		cp = httpclient.GetClient(time.Duration(callTimeout) * time.Millisecond)
 	} else {
-		cp = httpclient.GetClientH2C(time.Duration(timeout) * time.Millisecond)
+		cp = httpclient.GetClientH2C(time.Duration(callTimeout) * time.Millisecond)
+	}
+	if callToken != "" {
+		cp.SetGlobalHeader("Access-Token", callToken)
 	}
 	appClientPools[app] = cp
 
@@ -299,10 +313,10 @@ var syncConn *redigo.PubSubConn
 
 func fetchApp(app string) {
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(Config.RegistryCalls, logger)
+		clientRedisPool = redis.GetRedis(Config.Registry, logger)
 	}
 
-	appResults := clientRedisPool.Do("HGETALL", Config.RegistryPrefix+app).ResultMap()
+	appResults := clientRedisPool.Do("HGETALL", app).ResultMap()
 	for _, node := range appNodes[app] {
 		if appResults[node.Addr] == nil {
 			logInfo("remove node", "node", node, "nodes", appNodes[app])
@@ -366,7 +380,7 @@ func syncDiscover(initedChan chan bool) {
 				if len(a) == 2 {
 					weight, _ = strconv.Atoi(a[1])
 				}
-				app := strings.Replace(v.Channel, Config.RegistryPrefix+"CH_", "", 1)
+				app := strings.Replace(v.Channel, "CH_", "", 1)
 				logInfo("received new registered info", "nodes", appNodes[app], "appSubscribeKeys", appSubscribeKeys)
 				//log.Printf("DISCOVER	Received	%s	%s	%d", app, addr, weight)
 				pushNode(app, addr, weight)
