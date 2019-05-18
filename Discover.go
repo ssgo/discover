@@ -275,7 +275,10 @@ func addApp(app string, callInfo string, fetch bool) bool {
 	appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
 
 	callInfoArr := u.SplitTrim(callInfo, ":")
-	callTimeout := u.Int(callInfo[0])
+	callTimeout := 0
+	if len(callInfoArr) > 0 {
+		callTimeout = u.Int(callInfoArr[0])
+	}
 	if callTimeout <= 0 {
 		callTimeout = 10000
 	}
