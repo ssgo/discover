@@ -24,6 +24,7 @@ var daemonRunning = false
 var syncerRunning = false
 var syncerStopChan chan bool
 var daemonStopChan chan bool
+
 //var pingStopChan chan bool
 
 var myAddr = ""
@@ -103,7 +104,7 @@ func Start(addr string) bool {
 
 		// 注册节点
 		if serverRedisPool.HSET(Config.App, addr, Config.Weight) {
-		//if r := serverRedisPool.Do("HSET " + Config.App, addr, Config.Weight); r.Error == nil {
+			//if r := serverRedisPool.Do("HSET " + Config.App, addr, Config.Weight); r.Error == nil {
 			logInfo("registered")
 			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", addr, Config.Weight))
 			daemonRunning = true
@@ -440,8 +441,15 @@ func pushNode(app, addr string, weight int) {
 		// 新节点
 		var avgScore float64 = 0
 		for _, node := range appNodes[app] {
-			avgScore = float64(node.UsedTimes) / float64(weight)
+			avgScore = float64(node.UsedTimes) / float64(node.Weight)
+			break
 		}
+		//for _, node := range appNodes[app] {
+		//	avgScore += float64(node.UsedTimes) / float64(node.Weight)
+		//}
+		//if avgScore > 0 {
+		//	avgScore /= float64(len(appNodes))
+		//}
 		usedTimes := uint64(avgScore) * uint64(weight)
 		appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes}
 	} else if appNodes[app][addr].Weight != weight {
