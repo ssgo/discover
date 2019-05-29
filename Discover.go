@@ -6,8 +6,11 @@ import (
 	"github.com/ssgo/log"
 	"github.com/ssgo/standard"
 	"github.com/ssgo/u"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	redigo "github.com/gomodule/redigo/redis"
@@ -231,6 +234,21 @@ func Stop() {
 			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, 0))
 		}
 	}
+}
+
+//注册服务
+func Register(addr string) {
+	Start(addr)
+
+	closeChan := make(chan os.Signal, 2)
+	signal.Notify(closeChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-closeChan
+		if IsClient() || IsServer() {
+			Stop()
+		}
+		Wait()
+	}()
 }
 
 func Wait() {
