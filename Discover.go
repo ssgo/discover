@@ -236,8 +236,8 @@ func Stop() {
 	}
 }
 
-//注册服务
-func Register(addr string) {
+//外部框架使用discover
+func EasyStart(addr string) {
 	Start(addr)
 
 	closeChan := make(chan os.Signal, 2)
