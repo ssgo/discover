@@ -6,6 +6,7 @@ import (
 	"github.com/ssgo/log"
 	"github.com/ssgo/standard"
 	"github.com/ssgo/u"
+	"net"
 	"os"
 	"os/signal"
 	"strconv"
@@ -237,17 +238,32 @@ func Stop() {
 }
 
 //外部框架使用discover
-func EasyStart(addr string) {
-	Start(addr)
-
-	closeChan := make(chan os.Signal, 2)
-	signal.Notify(closeChan, os.Interrupt, syscall.SIGTERM)
+func EasyStart(port string) {
+	addrs, _ := net.InterfaceAddrs()
+	var ip net.IP
+	for _, a := range addrs {
+		an := a.(*net.IPNet)
+		// 忽略 Docker 私有网段
+		if an.IP.IsGlobalUnicast() && !strings.HasPrefix(an.IP.To4().String(), "172.17.") {
+			ip = an.IP.To4()
+		}
+	}
+	addr := fmt.Sprintf("%s%s", ip.String(), port)
+	if Start(addr) == false {
+		logError("failed to start discover")
+		return
+	}
+	closeEsayChan := make(chan os.Signal, 2)
+	signal.Notify(closeEsayChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-closeChan
+		<-closeEsayChan
 		if IsClient() || IsServer() {
 			Stop()
 		}
 		Wait()
+		signal.Stop(closeEsayChan)
+		logInfo("closed discover")
+		os.Exit(2)
 	}()
 }
 
