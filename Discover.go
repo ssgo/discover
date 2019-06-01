@@ -238,20 +238,34 @@ func Stop() {
 }
 
 //外部框架使用discover
-func EasyStart(port string) {
-	addrs, _ := net.InterfaceAddrs()
-	var ip net.IP
-	for _, a := range addrs {
-		an := a.(*net.IPNet)
-		// 忽略 Docker 私有网段
-		if an.IP.IsGlobalUnicast() && !strings.HasPrefix(an.IP.To4().String(), "172.17.") {
-			ip = an.IP.To4()
+func EasyStart() (string, int) {
+	listener, err := net.Listen("tcp", os.Getenv("DISCOVER_LISTEN"))
+	if err != nil {
+		logger.Error(err.Error())
+		return "", 0
+	}
+
+	addrInfo := listener.Addr().(*net.TCPAddr)
+	_ = listener.Close()
+
+	ip := addrInfo.IP
+	port := addrInfo.Port
+	if !ip.IsGlobalUnicast() {
+		// 如果监听的不是外部IP，使用第一个外部IP
+		addrs, _ := net.InterfaceAddrs()
+		for _, a := range addrs {
+			an := a.(*net.IPNet)
+			// 忽略 Docker 私有网段
+			if an.IP.IsGlobalUnicast() && !strings.HasPrefix(an.IP.To4().String(), "172.17.") {
+				ip = an.IP.To4()
+			}
 		}
 	}
-	addr := fmt.Sprintf("%s%s", ip.String(), port)
+	addr := fmt.Sprintf("%s:%d", ip.String(), port)
+
 	if Start(addr) == false {
 		logError("failed to start discover")
-		return
+		return "", 0
 	}
 	closeEsayChan := make(chan os.Signal, 2)
 	signal.Notify(closeEsayChan, os.Interrupt, syscall.SIGTERM)
@@ -260,11 +274,10 @@ func EasyStart(port string) {
 		if IsClient() || IsServer() {
 			Stop()
 		}
-		Wait()
-		signal.Stop(closeEsayChan)
-		logInfo("closed discover")
-		os.Exit(2)
+		//signal.Stop(closeEsayChan)
 	}()
+
+	return ip.String(), port
 }
 
 func Wait() {
