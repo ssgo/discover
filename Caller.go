@@ -3,7 +3,9 @@ package discover
 import (
 	"fmt"
 	"github.com/ssgo/standard"
+	"github.com/ssgo/u"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/ssgo/httpclient"
@@ -47,23 +49,48 @@ func (caller *Caller) Do(method, app, path string, data interface{}, headers ...
 	return r
 }
 func (caller *Caller) DoWithNode(method, app, withNode, path string, data interface{}, headers ...string) (*httpclient.Result, string) {
-	//appConf := Config.Calls[app]
-	if headers == nil {
-		headers = []string{}
+	callerHeaders := map[string]string{}
+	if headers != nil {
+		for i := 1; i < len(headers); i += 2 {
+			callerHeaders[headers[i-1]] = headers[i]
+		}
 	}
-	//if appConf != nil && appConf.Headers != nil {
-	//	for k, v := range appConf.Headers {
-	//		headers = append(headers, k, *v)
-	//	}
-	//}
 
 	if isServer {
-		headers = append(headers, standard.DiscoverHeaderFromApp, Config.App)
-		headers = append(headers, standard.DiscoverHeaderFromNode, myAddr)
+		callerHeaders[standard.DiscoverHeaderFromApp] = Config.App
+		callerHeaders[standard.DiscoverHeaderFromNode] = myAddr
+	}
+
+	callData := map[string]interface{}{}
+	if data != nil && caller.NoBody == false && (settedRoute != nil || settedLoadBalancer != nil) {
+		t := u.FinalType(reflect.ValueOf(data))
+		if t.Kind() == reflect.Map || t.Kind() == reflect.Struct {
+			u.Convert(data, &callData)
+		}
 	}
 
 	var r *httpclient.Result
-	appClient := AppClient{logger: caller.logger}
+	appClient := AppClient{Logger: caller.logger, App: app, Method: method, Path: path, Data: &callData, Headers: &callerHeaders}
+	if settedRoute != nil {
+		settedRoute(&appClient, caller.Request)
+		app = appClient.App
+		method = appClient.Method
+		path = appClient.Path
+		if data != nil && caller.NoBody == false {
+			data = callData
+		}
+	}
+
+	callInfo := calls[app]
+	if callInfo != nil && callInfo.Token != "" && callerHeaders["Access-Token"] == "" {
+		callerHeaders["Access-Token"] = callInfo.Token
+	}
+
+	settedHeaders := make([]string, 0)
+	for k, v := range callerHeaders {
+		settedHeaders = append(settedHeaders, k, v)
+	}
+
 	for {
 		node := appClient.NextWithNode(app, withNode, caller.Request)
 		if node == nil {
@@ -74,18 +101,18 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 		startTime := time.Now()
 		node.UsedTimes++
 		scheme := "http"
-		//if appConf.WithSSL {
-		//	scheme += "s"
-		//}
+		if callInfo != nil && callInfo.SSL {
+			scheme += "s"
+		}
 		if appClientPools[app].NoBody != caller.NoBody {
 			appClientPools[app].NoBody = caller.NoBody
 		}
 		if caller.Request == nil {
-			r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, headers...)
+			r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
 		} else {
-			r = appClientPools[app].DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, headers...)
+			r = appClientPools[app].DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
 		}
-		settedLoadBalancer.Response(node, r.Error, r.Response, startTime.UnixNano()-time.Now().UnixNano())
+		settedLoadBalancer.Response(&appClient, node, r.Error, r.Response, startTime.UnixNano()-time.Now().UnixNano())
 
 		if r.Error != nil || r.Response.StatusCode == 502 || r.Response.StatusCode == 503 || r.Response.StatusCode == 504 {
 			statusCode := 0

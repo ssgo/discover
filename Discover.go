@@ -7,8 +7,10 @@ import (
 	"github.com/ssgo/standard"
 	"github.com/ssgo/u"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,6 +33,15 @@ var daemonStopChan chan bool
 
 //var pingStopChan chan bool
 
+type callInfoType struct {
+	Timeout     int
+	HttpVersion int
+	Token       string
+	SSL         bool
+}
+
+var calls = map[string]*callInfoType{}
+
 var myAddr = ""
 var appNodes = map[string]map[string]*NodeInfo{}
 
@@ -39,9 +50,10 @@ type NodeInfo struct {
 	Weight      int
 	UsedTimes   uint64
 	FailedTimes int
-	Data        interface{}
+	Data        map[string]interface{}
 }
 
+var settedRoute func(*AppClient, *http.Request) = nil
 var settedLoadBalancer LoadBalancer = &DefaultLoadBalancer{}
 var appSubscribeKeys []interface{}
 var appClientPools = map[string]*httpclient.ClientPool{}
@@ -304,11 +316,13 @@ func Wait() {
 	}
 }
 
-func AddExternalApp(app string, callInfo string) bool {
-	return addApp(app, callInfo, true)
+func AddExternalApp(app string, callConf string) bool {
+	return addApp(app, callConf, true)
 }
 
-func addApp(app string, callInfo string, fetch bool) bool {
+var numberMatcher, _ = regexp.Compile("^\\d+$")
+
+func addApp(app string, callConf string, fetch bool) bool {
 	if appClientPools[app] != nil {
 		return false
 	}
@@ -316,40 +330,40 @@ func addApp(app string, callInfo string, fetch bool) bool {
 		Config.Calls = make(map[string]string)
 	}
 	if Config.Calls[app] == "" {
-		Config.Calls[app] = callInfo
+		Config.Calls[app] = callConf
 	}
 
 	appNodes[app] = map[string]*NodeInfo{}
 	appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
 
-	callInfoArr := u.SplitTrim(callInfo, ":")
-	callTimeout := 0
-	if len(callInfoArr) > 0 {
-		callTimeout = u.Int(callInfoArr[0])
+	callInfo := callInfoType{
+		Timeout:     10000,
+		HttpVersion: 2,
+		SSL:         false,
+		Token:       "",
 	}
-	if callTimeout <= 0 {
-		callTimeout = 10000
-	}
-	callToken := ""
-	callHttpVersion := 2
-	if len(callInfoArr) > 1 {
-		callToken = callInfoArr[1]
-	}
-	if len(callInfoArr) > 2 {
-		if callInfoArr[2] == "1" {
-			callHttpVersion = 1
+	for _, v := range u.SplitTrim(callConf, ":") {
+		if v == "1" || v == "2" {
+			callInfo.HttpVersion = u.Int(v)
+		} else if v == "s" {
+			callInfo.SSL = true
+		} else if numberMatcher.MatchString(v) {
+			callInfo.Timeout = u.Int(v)
+		} else {
+			callInfo.Token = v
 		}
 	}
+	calls[app] = &callInfo
 
 	var cp *httpclient.ClientPool
-	if callHttpVersion == 1 {
-		cp = httpclient.GetClient(time.Duration(callTimeout) * time.Millisecond)
+	if callInfo.HttpVersion == 1 {
+		cp = httpclient.GetClient(time.Duration(callInfo.Timeout) * time.Millisecond)
 	} else {
-		cp = httpclient.GetClientH2C(time.Duration(callTimeout) * time.Millisecond)
+		cp = httpclient.GetClientH2C(time.Duration(callInfo.Timeout) * time.Millisecond)
 	}
-	if callToken != "" {
-		cp.SetGlobalHeader("Access-Token", callToken)
-	}
+	//if callInfo.Token != "" {
+	//	cp.SetGlobalHeader("Access-Token", callInfo.Token)
+	//}
 	appClientPools[app] = cp
 
 	// 立刻获取一次应用信息
@@ -498,7 +512,7 @@ func pushNode(app, addr string, weight int) {
 		//	avgScore /= float64(len(appNodes))
 		//}
 		usedTimes := uint64(avgScore) * uint64(weight)
-		appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes}
+		appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes, Data: map[string]interface{}{}}
 	} else if appNodes[app][addr].Weight != weight {
 		// 修改权重
 		node := appNodes[app][addr]

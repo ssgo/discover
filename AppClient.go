@@ -9,14 +9,19 @@ import (
 type AppClient struct {
 	excludes map[string]bool
 	tryTimes int
-	logger   *log.Logger
+	Logger   *log.Logger
+	App      string
+	Method   string
+	Path     string
+	Data     *map[string]interface{}
+	Headers  *map[string]string
 }
 
 func (appClient *AppClient) logError(error string, extra ...interface{}) {
-	if appClient.logger == nil {
-		appClient.logger = log.DefaultLogger
+	if appClient.Logger == nil {
+		appClient.Logger = log.DefaultLogger
 	}
-	appClient.logger.Error("Discover Client: "+error, extra...)
+	appClient.Logger.Error("Discover Client: "+error, extra...)
 }
 
 func (appClient *AppClient) Next(app string, request *http.Request) *NodeInfo {
@@ -61,7 +66,7 @@ func (appClient *AppClient) NextWithNode(app, withNode string, request *http.Req
 		}
 	}
 	if len(nodes) > 0 {
-		node = settedLoadBalancer.Next(nodes, request)
+		node = settedLoadBalancer.Next(appClient, nodes, request)
 		appClient.excludes[node.Addr] = true
 	}
 	if node == nil {
