@@ -21,7 +21,7 @@ func TestBase(t *testing.T) {
 
 	discover.Config.App = "app1"
 	discover.Config.Calls = map[string]string{
-		"app1": "5000:xxxx:1",
+		"app1": "5000ms:xxxx:1",
 	}
 
 	discover.Start("127.0.0.1:18001")

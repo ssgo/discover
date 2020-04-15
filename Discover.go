@@ -34,7 +34,7 @@ var daemonStopChan chan bool
 //var pingStopChan chan bool
 
 type callInfoType struct {
-	Timeout     int
+	Timeout     time.Duration
 	HttpVersion int
 	Token       string
 	SSL         bool
@@ -320,7 +320,7 @@ func AddExternalApp(app string, callConf string) bool {
 	return addApp(app, callConf, true)
 }
 
-var numberMatcher, _ = regexp.Compile("^\\d+$")
+var numberMatcher, _ = regexp.Compile("^\\d+(s|ms|us|µs|ns?)?$")
 
 func addApp(app string, callConf string, fetch bool) bool {
 	if appClientPools[app] != nil {
@@ -337,7 +337,7 @@ func addApp(app string, callConf string, fetch bool) bool {
 	appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
 
 	callInfo := callInfoType{
-		Timeout:     10000,
+		Timeout:     10 * time.Second,
 		HttpVersion: 2,
 		SSL:         false,
 		Token:       "",
@@ -348,7 +348,7 @@ func addApp(app string, callConf string, fetch bool) bool {
 		} else if v == "s" {
 			callInfo.SSL = true
 		} else if numberMatcher.MatchString(v) {
-			callInfo.Timeout = u.Int(v)
+			callInfo.Timeout = u.Duration(v)
 		} else {
 			callInfo.Token = v
 		}
@@ -357,9 +357,9 @@ func addApp(app string, callConf string, fetch bool) bool {
 
 	var cp *httpclient.ClientPool
 	if callInfo.HttpVersion == 1 {
-		cp = httpclient.GetClient(time.Duration(callInfo.Timeout) * time.Millisecond)
+		cp = httpclient.GetClient(callInfo.Timeout)
 	} else {
-		cp = httpclient.GetClientH2C(time.Duration(callInfo.Timeout) * time.Millisecond)
+		cp = httpclient.GetClientH2C(callInfo.Timeout)
 	}
 	//if callInfo.Token != "" {
 	//	cp.SetGlobalHeader("Access-Token", callInfo.Token)
