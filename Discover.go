@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -50,7 +51,8 @@ type NodeInfo struct {
 	Weight      int
 	UsedTimes   uint64
 	FailedTimes int
-	Data        map[string]interface{}
+	Data        sync.Map
+	//Data        map[string]interface{}
 }
 
 var settedRoute func(*AppClient, *http.Request) = nil
@@ -321,11 +323,13 @@ func AddExternalApp(app string, callConf string) bool {
 }
 
 var numberMatcher, _ = regexp.Compile("^\\d+(s|ms|us|µs|ns?)?$")
+var appLock = sync.Mutex{}
 
 func addApp(app string, callConf string, fetch bool) bool {
 	if appClientPools[app] != nil {
 		return false
 	}
+	appLock.Lock()
 	if Config.Calls == nil {
 		Config.Calls = make(map[string]string)
 	}
@@ -365,6 +369,7 @@ func addApp(app string, callConf string, fetch bool) bool {
 	//	cp.SetGlobalHeader("Access-Token", callInfo.Token)
 	//}
 	appClientPools[app] = cp
+	appLock.Unlock()
 
 	// 立刻获取一次应用信息
 	if fetch {
@@ -492,7 +497,10 @@ func syncDiscover(initedChan chan bool) {
 	}
 }
 
+var nodesLock = sync.Mutex{}
+
 func pushNode(app, addr string, weight int) {
+	nodesLock.Lock()
 	if weight == 0 {
 		// 删除节点
 		if appNodes[app][addr] != nil {
@@ -512,11 +520,12 @@ func pushNode(app, addr string, weight int) {
 		//	avgScore /= float64(len(appNodes))
 		//}
 		usedTimes := uint64(avgScore) * uint64(weight)
-		appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes, Data: map[string]interface{}{}}
+		appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes, Data: sync.Map{}}
 	} else if appNodes[app][addr].Weight != weight {
 		// 修改权重
 		node := appNodes[app][addr]
 		node.Weight = weight
 		node.UsedTimes = uint64(float64(node.UsedTimes) / float64(node.Weight) * float64(weight))
 	}
+	nodesLock.Unlock()
 }
