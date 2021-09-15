@@ -267,14 +267,24 @@ func EasyStart() (string, int) {
 	if !ip.IsGlobalUnicast() {
 		// 如果监听的不是外部IP，使用第一个外部IP
 		addrs, _ := net.InterfaceAddrs()
+		//logger.Warning("====1", Config.IpPrefix)
 		for _, a := range addrs {
 			an := a.(*net.IPNet)
-			// 忽略 Docker 私有网段
+			//logger.Warning("====2", an.IP.To4().String())
+			// 显式匹配网段
+			if Config.IpPrefix != "" && strings.HasPrefix(an.IP.To4().String(), Config.IpPrefix) {
+				ip = an.IP.To4()
+				break
+			}
+
+			// 忽略 Docker 私有网段，匹配最后一个
+			//logger.Warning("====3", an.IP.To4().String(), an.IP.IsGlobalUnicast())
 			if an.IP.IsGlobalUnicast() && !strings.HasPrefix(an.IP.To4().String(), "172.17.") {
 				ip = an.IP.To4()
 			}
 		}
 	}
+	//logger.Warning("====4", ip, port)
 	addr := fmt.Sprintf("%s:%d", ip.String(), port)
 
 	if Start(addr) == false {

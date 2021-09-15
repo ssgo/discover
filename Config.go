@@ -6,4 +6,5 @@ var Config = struct {
 	Weight         int               // 100
 	Calls          map[string]string // defines which apps will call
 	CallRetryTimes int               // 10
+	IpPrefix       string            // 指定使用的IP网段，默认排除 172.17
 }{}
