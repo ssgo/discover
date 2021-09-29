@@ -119,7 +119,13 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 			if r.Response != nil {
 				statusCode = r.Response.StatusCode
 			}
-			caller.logError(r.Error.Error(),
+			errStr := ""
+			if r.Error != nil {
+				errStr = r.Error.Error()
+			}else{
+				errStr = r.Response.Status
+			}
+			caller.logError(errStr,
 				"app", app,
 				"statusCode", statusCode,
 				"path", path,
