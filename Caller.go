@@ -81,82 +81,82 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 		}
 	}
 
-	callInfo := calls[app]
-	if callInfo != nil && callInfo.Token != "" && callerHeaders["Access-Token"] == "" {
-		callerHeaders["Access-Token"] = callInfo.Token
-	}
-
-	settedHeaders := make([]string, 0)
-	for k, v := range callerHeaders {
-		settedHeaders = append(settedHeaders, k, v)
-	}
-
-	for {
-		node := appClient.NextWithNode(app, withNode, caller.Request)
-		if node == nil {
-			break
+	if appClient.CheckApp(app) {
+		callInfo := calls[app]
+		if callInfo != nil && callInfo.Token != "" && callerHeaders["Access-Token"] == "" {
+			callerHeaders["Access-Token"] = callInfo.Token
 		}
 
-		// 请求节点
-		startTime := time.Now()
-		node.UsedTimes++
-		scheme := "http"
-		if callInfo != nil && callInfo.SSL {
-			scheme += "s"
+		settedHeaders := make([]string, 0)
+		for k, v := range callerHeaders {
+			settedHeaders = append(settedHeaders, k, v)
 		}
-		if appClientPools[app].NoBody != caller.NoBody {
-			appClientPools[app].NoBody = caller.NoBody
-		}
-		if caller.Request == nil {
-			r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
-		} else {
-			r = appClientPools[app].DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
-		}
-		settedLoadBalancer.Response(&appClient, node, r.Error, r.Response, startTime.UnixNano()-time.Now().UnixNano())
 
-		if r.Error != nil || r.Response.StatusCode == 502 || r.Response.StatusCode == 503 || r.Response.StatusCode == 504 {
-			statusCode := 0
-			if r.Response != nil {
-				statusCode = r.Response.StatusCode
+		for {
+			node := appClient.NextWithNode(app, withNode, caller.Request)
+			if node == nil {
+				break
 			}
-			errStr := ""
-			if r.Error != nil {
-				errStr = r.Error.Error()
-			}else{
-				errStr = r.Response.Status
+			// 请求节点
+			startTime := time.Now()
+			node.UsedTimes++
+			scheme := "http"
+			if callInfo != nil && callInfo.SSL {
+				scheme += "s"
 			}
-			caller.logError(errStr,
-				"app", app,
-				"statusCode", statusCode,
-				"path", path,
-				"tryTimes", appClient.tryTimes,
-				"node", node,
-				"nodes", appNodes[app],
-			)
-			//log.Printf("DISCOVER	Failed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
-			// 错误处理
-			node.FailedTimes++
-			if node.FailedTimes >= Config.CallRetryTimes {
-				caller.logError(fmt.Sprint("call failed on ", node.FailedTimes, " times"),
-					"app", app,
-					"addr", node.Addr,
-					"path", path,
-					"weight", node.Weight,
-					"usedTimes", node.UsedTimes,
-					"tryTimes", appClient.tryTimes,
-					"appNum", len(appNodes[app]),
-					"failedTimes", node.FailedTimes,
-					"retryLimit", Config.CallRetryTimes,
-					"statusCode", statusCode,
-				)
-				//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
-				if clientRedisPool.HDEL(app, node.Addr) > 0 {
-					clientRedisPool.Do("PUBLISH", "CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))
+			if appClientPools[app].NoBody != caller.NoBody {
+				appClientPools[app].NoBody = caller.NoBody
+			}
+			if caller.Request == nil {
+				r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+			} else {
+				r = appClientPools[app].DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+			}
+			settedLoadBalancer.Response(&appClient, node, r.Error, r.Response, startTime.UnixNano()-time.Now().UnixNano())
+			if r.Error != nil || r.Response.StatusCode == 502 || r.Response.StatusCode == 503 || r.Response.StatusCode == 504 {
+				statusCode := 0
+				if r.Response != nil {
+					statusCode = r.Response.StatusCode
 				}
+				errStr := ""
+				if r.Error != nil {
+					errStr = r.Error.Error()
+				} else {
+					errStr = r.Response.Status
+				}
+				caller.logError(errStr,
+					"app", app,
+					"statusCode", statusCode,
+					"path", path,
+					"tryTimes", appClient.tryTimes,
+					"node", node,
+					"nodes", appNodes[app],
+				)
+				//log.Printf("DISCOVER	Failed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
+				// 错误处理
+				node.FailedTimes++
+				if node.FailedTimes >= Config.CallRetryTimes {
+					caller.logError(fmt.Sprint("call failed on ", node.FailedTimes, " times"),
+						"app", app,
+						"addr", node.Addr,
+						"path", path,
+						"weight", node.Weight,
+						"usedTimes", node.UsedTimes,
+						"tryTimes", appClient.tryTimes,
+						"appNum", len(appNodes[app]),
+						"failedTimes", node.FailedTimes,
+						"retryLimit", Config.CallRetryTimes,
+						"statusCode", statusCode,
+					)
+					//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
+					if clientRedisPool.HDEL(app, node.Addr) > 0 {
+						clientRedisPool.Do("PUBLISH", "CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))
+					}
+				}
+			} else {
+				// 成功
+				return r, node.Addr
 			}
-		} else {
-			// 成功
-			return r, node.Addr
 		}
 	}
 

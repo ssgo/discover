@@ -28,6 +28,19 @@ func (appClient *AppClient) Next(app string, request *http.Request) *NodeInfo {
 	return appClient.NextWithNode(app, "", request)
 }
 
+func (appClient *AppClient) CheckApp(app string) bool {
+	if appNodes[app] == nil {
+		if !addApp(app, "", true) {
+			appClient.logError("app not found", "app", app, "calls", Config.Calls)
+			return false
+		} else {
+			// 新app，重启订阅
+			Restart()
+		}
+	}
+	return true
+}
+
 func (appClient *AppClient) NextWithNode(app, withNode string, request *http.Request) *NodeInfo {
 	if appClient.excludes == nil {
 		appClient.excludes = map[string]bool{}

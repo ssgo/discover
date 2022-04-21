@@ -74,7 +74,7 @@ func logError(error string, extra ...interface{}) {
 	if extra == nil {
 		extra = make([]interface{}, 0)
 	}
-	extra = append(extra, "app", Config.App, "addr", myAddr, "weight", Config.Weight)
+	extra = append(extra, "localApp", Config.App, "localAddr", myAddr)
 	logger.Error("Discover: "+error, extra...)
 }
 
@@ -82,7 +82,7 @@ func logInfo(info string, extra ...interface{}) {
 	if extra == nil {
 		extra = make([]interface{}, 0)
 	}
-	extra = append(extra, "app", Config.App, "addr", myAddr, "weight", Config.Weight)
+	extra = append(extra, "localApp", Config.App, "localAddr", myAddr)
 	logger.Info("Discover: "+info, extra...)
 }
 
@@ -126,7 +126,6 @@ func Start(addr string) bool {
 			logInfo("registered")
 			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", addr, Config.Weight))
 			daemonRunning = true
-			//fmt.Println("  ####1", r.Error, r.String())
 			go daemon()
 		} else {
 			logError("register failed") // TODO ????????
@@ -194,7 +193,7 @@ func Restart() bool {
 		isClient = true
 	}
 
-	// 如果之前没有启动
+	// 如果之前已经启动
 	if syncConn != nil {
 		logInfo("stopping", "appSubscribeKeys", appSubscribeKeys)
 		//log.Print("DISCOVER	stopping")
@@ -385,7 +384,6 @@ func addApp(app string, callConf string, fetch bool) bool {
 	if fetch {
 		fetchApp(app)
 	}
-
 	return true
 }
 
@@ -406,7 +404,7 @@ func fetchApp(app string) {
 	}
 	for addr, weightResult := range appResults {
 		weight := weightResult.Int()
-		logInfo("update node", "nodes", appNodes[app])
+		logInfo("update node", "app", app, "addr", addr, "weight", weightResult.Int())
 		//log.Printf("DISCOVER	Reset	%s	%s	%d", app, addr, weight)
 		pushNode(app, addr, weight)
 	}
