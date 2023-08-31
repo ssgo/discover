@@ -74,7 +74,7 @@ func logError(error string, extra ...interface{}) {
 	if extra == nil {
 		extra = make([]interface{}, 0)
 	}
-	extra = append(extra, "localApp", Config.App, "localAddr", myAddr)
+	extra = append(extra, "app", Config.App, "addr", myAddr)
 	logger.Error("Discover: "+error, extra...)
 }
 
@@ -82,7 +82,7 @@ func logInfo(info string, extra ...interface{}) {
 	if extra == nil {
 		extra = make([]interface{}, 0)
 	}
-	extra = append(extra, "localApp", Config.App, "localAddr", myAddr)
+	extra = append(extra, "app", Config.App, "addr", myAddr)
 	logger.Info("Discover: "+info, extra...)
 }
 
@@ -122,6 +122,7 @@ func Start(addr string) bool {
 
 		// 注册节点
 		if serverRedisPool.HSET(Config.App, addr, Config.Weight) {
+			serverRedisPool.SETEX(Config.App+"_"+addr, 10, "1")
 			//if r := serverRedisPool.Do("HSET " + Config.App, addr, Config.Weight); r.Error == nil {
 			logInfo("registered")
 			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", addr, Config.Weight))
@@ -148,20 +149,30 @@ func daemon() {
 	logInfo("daemon thread started")
 
 	for {
+		// 每1秒检查一次
 		for i := 0; i < 10; i++ {
-			time.Sleep(time.Second * 1)
+			time.Sleep(time.Millisecond * 100)
 			if !daemonRunning {
 				break
 			}
 		}
-		if isServer && !serverRedisPool.HEXISTS(Config.App, myAddr) {
-			logInfo("lost app registered info")
-			// 注册节点
-			if serverRedisPool.HSET(Config.App, myAddr, Config.Weight) {
-				logInfo("registered on daemon")
-				serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, Config.Weight))
+		if !daemonRunning {
+			break
+		}
+		if isServer {
+			if !serverRedisPool.HEXISTS(Config.App, myAddr) {
+				logInfo("lost app registered info")
+				// 注册节点
+				if serverRedisPool.HSET(Config.App, myAddr, Config.Weight) {
+					serverRedisPool.SETEX(Config.App+"_"+myAddr, 10, "1")
+					logInfo("registered on daemon")
+					serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, Config.Weight))
+				} else {
+					logError("register failed on daemon")
+				}
 			} else {
-				logError("register failed on daemon")
+				// 保持存活
+				serverRedisPool.SETEX(Config.App+"_"+myAddr, 10, "1")
 			}
 		}
 		if !daemonRunning {
@@ -243,6 +254,7 @@ func Stop() {
 	if isServer {
 		daemonRunning = false
 		if serverRedisPool.HDEL(Config.App, myAddr) > 0 {
+			serverRedisPool.DEL(Config.App+"_"+myAddr)
 			logInfo("unregistered", "appSubscribeKeys", appSubscribeKeys)
 			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", Config.App, myAddr, 0)
 			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, 0))
@@ -388,6 +400,7 @@ func addApp(app string, callConf string, fetch bool) bool {
 }
 
 var syncConn *redigo.PubSubConn
+var lastFetchTimeTag int64
 
 func fetchApp(app string) {
 	if clientRedisPool == nil {
@@ -395,6 +408,21 @@ func fetchApp(app string) {
 	}
 
 	appResults := clientRedisPool.Do("HGETALL", app).ResultMap()
+
+	// 有调用时每3秒检查一次node的可用性
+	fetchTimeTag := time.Now().Unix()// / 3
+	if fetchTimeTag != lastFetchTimeTag {
+		lastFetchTimeTag = fetchTimeTag
+		for addr, _ := range appResults {
+			checkKey := app + "_" + addr
+			if !serverRedisPool.EXISTS(checkKey) {
+				// 删除不存在了的节点
+				serverRedisPool.HDEL(app, addr)
+				delete(appResults, addr)
+			}
+		}
+	}
+
 	for _, node := range appNodes[app] {
 		if appResults[node.Addr] == nil {
 			logInfo("remove node", "node", node, "nodes", appNodes[app])
@@ -427,7 +455,7 @@ func syncDiscover(initedChan chan bool) {
 				inited = true
 				initedChan <- true
 			}
-			time.Sleep(time.Second * 1)
+			time.Sleep(time.Millisecond * 500)
 			if !syncerRunning {
 				break
 			}
@@ -483,7 +511,7 @@ func syncDiscover(initedChan chan bool) {
 		if !syncerRunning {
 			break
 		}
-		time.Sleep(time.Second * 1)
+		time.Sleep(time.Millisecond * 500)
 		if !syncerRunning {
 			break
 		}
