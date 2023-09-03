@@ -41,10 +41,10 @@ type callInfoType struct {
 	SSL         bool
 }
 
-var calls = map[string]*callInfoType{}
+var _calls = map[string]*callInfoType{}
 
 var myAddr = ""
-var appNodes = map[string]map[string]*NodeInfo{}
+var _appNodes = map[string]map[string]*NodeInfo{}
 
 type NodeInfo struct {
 	Addr        string
@@ -254,7 +254,7 @@ func Stop() {
 	if isServer {
 		daemonRunning = false
 		if serverRedisPool.HDEL(Config.App, myAddr) > 0 {
-			serverRedisPool.DEL(Config.App+"_"+myAddr)
+			serverRedisPool.DEL(Config.App + "_" + myAddr)
 			logInfo("unregistered", "appSubscribeKeys", appSubscribeKeys)
 			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", Config.App, myAddr, 0)
 			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, 0))
@@ -344,22 +344,19 @@ func AddExternalApp(app string, callConf string) bool {
 }
 
 var numberMatcher, _ = regexp.Compile("^\\d+(s|ms|us|µs|ns?)?$")
-var appLock = sync.Mutex{}
+var appLock = sync.RWMutex{}
+
+func getCallInfo(app string) *callInfoType {
+	appLock.RLock()
+	info := _calls[app]
+	appLock.RUnlock()
+	return info
+}
 
 func addApp(app string, callConf string, fetch bool) bool {
 	if appClientPools[app] != nil {
 		return false
 	}
-	appLock.Lock()
-	if Config.Calls == nil {
-		Config.Calls = make(map[string]string)
-	}
-	if Config.Calls[app] == "" {
-		Config.Calls[app] = callConf
-	}
-
-	appNodes[app] = map[string]*NodeInfo{}
-	appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
 
 	callInfo := callInfoType{
 		Timeout:     10 * time.Second,
@@ -378,14 +375,25 @@ func addApp(app string, callConf string, fetch bool) bool {
 			callInfo.Token = v
 		}
 	}
-	calls[app] = &callInfo
 
 	var cp *httpclient.ClientPool
-	if callInfo.HttpVersion == 1 {
+	if callInfo.HttpVersion == 1 || callInfo.SSL {
 		cp = httpclient.GetClient(callInfo.Timeout)
 	} else {
 		cp = httpclient.GetClientH2C(callInfo.Timeout)
 	}
+
+	appLock.Lock()
+	if Config.Calls == nil {
+		Config.Calls = make(map[string]string)
+	}
+	Config.Calls[app] = callConf
+
+	_appNodes[app] = map[string]*NodeInfo{}
+	appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
+
+	_calls[app] = &callInfo
+
 	//if callInfo.Token != "" {
 	//	cp.SetGlobalHeader("Access-Token", callInfo.Token)
 	//}
@@ -410,7 +418,7 @@ func fetchApp(app string) {
 	appResults := clientRedisPool.Do("HGETALL", app).ResultMap()
 
 	// 有调用时每3秒检查一次node的可用性
-	fetchTimeTag := time.Now().Unix()// / 3
+	fetchTimeTag := time.Now().Unix() // / 3
 	if fetchTimeTag != lastFetchTimeTag {
 		lastFetchTimeTag = fetchTimeTag
 		for addr, _ := range appResults {
@@ -423,9 +431,11 @@ func fetchApp(app string) {
 		}
 	}
 
-	for _, node := range appNodes[app] {
+	nodes := getAppNodes(app)
+
+	for _, node := range nodes {
 		if appResults[node.Addr] == nil {
-			logInfo("remove node", "node", node, "nodes", appNodes[app])
+			logInfo("remove node", "node", node, "nodes", nodes)
 			//log.Printf("DISCOVER	Remove When Reset	%s	%s	%d", app, node.Addr, 0)
 			pushNode(app, node.Addr, 0)
 		}
@@ -436,6 +446,16 @@ func fetchApp(app string) {
 		//log.Printf("DISCOVER	Reset	%s	%s	%d", app, addr, weight)
 		pushNode(app, addr, weight)
 	}
+}
+
+func getAppNodes(app string) map[string]*NodeInfo{
+	appLock.RLock()
+	nodes := map[string]*NodeInfo{}
+	for k, v := range _appNodes[app] {
+		nodes[k] = v
+	}
+	appLock.RUnlock()
+	return nodes
 }
 
 func syncDiscover(initedChan chan bool) {
@@ -487,7 +507,7 @@ func syncDiscover(initedChan chan bool) {
 					weight, _ = strconv.Atoi(a[1])
 				}
 				app := strings.Replace(v.Channel, "CH_", "", 1)
-				logInfo("received new registered info", "nodes", appNodes[app], "appSubscribeKeys", appSubscribeKeys)
+				logInfo("received new registered info", "nodes", getAppNodes(app), "appSubscribeKeys", appSubscribeKeys)
 				//log.Printf("DISCOVER	Received	%s	%s	%d", app, addr, weight)
 				pushNode(app, addr, weight)
 			case redigo.Subscription:
@@ -533,35 +553,37 @@ func syncDiscover(initedChan chan bool) {
 	}
 }
 
-var nodesLock = sync.Mutex{}
+//var nodesLock = sync.Mutex{}
 
 func pushNode(app, addr string, weight int) {
-	nodesLock.Lock()
+	nodes := getAppNodes(app)
+	//nodesLock.Lock()
 	if weight == 0 {
 		// 删除节点
-		if appNodes[app][addr] != nil {
-			delete(appNodes[app], addr)
+		appLock.Lock()
+		if _appNodes[app][addr] != nil {
+			delete(_appNodes[app], addr)
 		}
-	} else if appNodes[app][addr] == nil {
+		appLock.Unlock()
+	} else if nodes[addr] == nil {
 		// 新节点
 		var avgScore float64 = 0
-		for _, node := range appNodes[app] {
+		for _, node := range nodes {
 			avgScore = float64(node.UsedTimes) / float64(node.Weight)
 			break
 		}
-		//for _, node := range appNodes[app] {
-		//	avgScore += float64(node.UsedTimes) / float64(node.Weight)
-		//}
-		//if avgScore > 0 {
-		//	avgScore /= float64(len(appNodes))
-		//}
 		usedTimes := uint64(avgScore) * uint64(weight)
-		appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes, Data: sync.Map{}}
-	} else if appNodes[app][addr].Weight != weight {
+		appLock.Lock()
+		_appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes, Data: sync.Map{}}
+		appLock.Unlock()
+	} else if nodes[addr].Weight != weight {
 		// 修改权重
-		node := appNodes[app][addr]
+		node := nodes[addr]
 		node.Weight = weight
 		node.UsedTimes = uint64(float64(node.UsedTimes) / float64(node.Weight) * float64(weight))
+		appLock.Lock()
+		_appNodes[app][addr] = node
+		appLock.Unlock()
 	}
-	nodesLock.Unlock()
+	//nodesLock.Unlock()
 }

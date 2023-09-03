@@ -82,7 +82,7 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 	}
 
 	if appClient.CheckApp(app) {
-		callInfo := calls[app]
+		callInfo := getCallInfo(app)
 		if callInfo != nil && callInfo.Token != "" && callerHeaders["Access-Token"] == "" {
 			callerHeaders["Access-Token"] = callInfo.Token
 		}
@@ -124,15 +124,18 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 				} else {
 					errStr = r.Response.Status
 				}
+
+				nodes := getAppNodes(app)
+
 				caller.logError(errStr,
 					"app", app,
 					"statusCode", statusCode,
 					"path", path,
 					"tryTimes", appClient.tryTimes,
 					"node", node,
-					"nodes", appNodes[app],
+					"nodes", nodes,
 				)
-				//log.Printf("DISCOVER	Failed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
+				//log.Printf("DISCOVER	Failed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(nodes), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
 				// 错误处理
 				node.FailedTimes++
 				if node.FailedTimes >= Config.CallRetryTimes {
@@ -143,7 +146,7 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 						"weight", node.Weight,
 						"usedTimes", node.UsedTimes,
 						"tryTimes", appClient.tryTimes,
-						"appNum", len(appNodes[app]),
+						"appNum", len(nodes),
 						"failedTimes", node.FailedTimes,
 						"retryLimit", Config.CallRetryTimes,
 						"statusCode", statusCode,
@@ -161,5 +164,5 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 	}
 
 	// 全部失败，返回最后一个失败的结果
-	return &httpclient.Result{Error: fmt.Errorf("CALL	%s	%s	No node avaliable	(%d / %d)", app, path, appClient.tryTimes, len(appNodes[app]))}, ""
+	return &httpclient.Result{Error: fmt.Errorf("CALL	%s	%s	No node avaliable	(%d / %d)", app, path, appClient.tryTimes, len(getAppNodes(app)))}, ""
 }

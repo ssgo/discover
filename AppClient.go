@@ -29,7 +29,8 @@ func (appClient *AppClient) Next(app string, request *http.Request) *NodeInfo {
 }
 
 func (appClient *AppClient) CheckApp(app string) bool {
-	if appNodes[app] == nil {
+	nodes := getAppNodes(app)
+	if nodes == nil {
 		if !addApp(app, "", true) {
 			appClient.logError("app not found", "app", app, "calls", Config.Calls)
 			return false
@@ -46,44 +47,45 @@ func (appClient *AppClient) NextWithNode(app, withNode string, request *http.Req
 		appClient.excludes = map[string]bool{}
 	}
 
-	if appNodes[app] == nil {
+	allNodes := getAppNodes(app)
+	if allNodes == nil {
 		appClient.logError("app not found", "app", app, "calls", Config.Calls)
 		return nil
 	}
-	if len(appNodes[app]) == 0 {
-		appClient.logError("node not found", "app", app, "nodes", appNodes[app])
+	if len(allNodes) == 0 {
+		appClient.logError("node not found", "app", app, "nodes", allNodes)
 		return nil
 	}
 
 	appClient.tryTimes++
 	if withNode != "" {
 		appClient.excludes[withNode] = true
-		return appNodes[app][withNode]
+		return allNodes[withNode]
 	}
 
 	var node *NodeInfo
-	nodes := make([]*NodeInfo, 0)
-	for _, node := range appNodes[app] {
+	readyNodes := make([]*NodeInfo, 0)
+	for _, node := range allNodes {
 		if appClient.excludes[node.Addr] || node.FailedTimes >= Config.CallRetryTimes {
 			continue
 		}
-		nodes = append(nodes, node)
+		readyNodes = append(readyNodes, node)
 	}
-	if len(nodes) == 0 {
+	if len(readyNodes) == 0 {
 		// 没有可用节点的情况下，尝试已经失败多次的节点
-		for _, node := range appNodes[app] {
+		for _, node := range allNodes {
 			if appClient.excludes[node.Addr] {
 				continue
 			}
-			nodes = append(nodes, node)
+			readyNodes = append(readyNodes, node)
 		}
 	}
-	if len(nodes) > 0 {
-		node = settedLoadBalancer.Next(appClient, nodes, request)
+	if len(readyNodes) > 0 {
+		node = settedLoadBalancer.Next(appClient, readyNodes, request)
 		appClient.excludes[node.Addr] = true
 	}
 	if node == nil {
-		appClient.logError("node not found", "app", app, "tryTimes", appClient.tryTimes, "nodes", appNodes[app])
+		appClient.logError("node not found", "app", app, "tryTimes", appClient.tryTimes, "nodes", allNodes)
 	}
 
 	return node
