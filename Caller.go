@@ -83,7 +83,8 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 
 	if appClient.CheckApp(app) {
 		callInfo := getCallInfo(app)
-		if callInfo != nil && callInfo.Token != "" && callerHeaders["Access-Token"] == "" {
+		//if callInfo != nil && callInfo.Token != "" && callerHeaders["Access-Token"] == "" {
+		if callInfo != nil && callInfo.Token != "" {
 			callerHeaders["Access-Token"] = callInfo.Token
 		}
 
