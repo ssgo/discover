@@ -42,7 +42,7 @@ func (caller *Caller) Delete(app, path string, data interface{}, headers ...stri
 	return caller.Do("DELETE", app, path, data, headers...)
 }
 func (caller *Caller) Head(app, path string, headers ...string) *httpclient.Result {
-	return caller.Do("HEAD", app, path, headers...)
+	return caller.Do("HEAD", app, path, nil, headers...)
 }
 func (caller *Caller) Do(method, app, path string, data interface{}, headers ...string) *httpclient.Result {
 	r, _ := caller.DoWithNode(method, app, "", path, data, headers...)
