@@ -67,15 +67,15 @@ func IsClient() bool {
 	return isClient
 }
 
-var logger = log.New(u.ShortUniqueId())
-var inited = false
+var _logger = log.New(u.ShortUniqueId())
+var _inited = false
 
 func logError(error string, extra ...interface{}) {
 	if extra == nil {
 		extra = make([]interface{}, 0)
 	}
 	extra = append(extra, "app", Config.App, "addr", myAddr)
-	logger.Error("Discover: "+error, extra...)
+	_logger.Error("Discover: "+error, extra...)
 }
 
 func logInfo(info string, extra ...interface{}) {
@@ -83,12 +83,16 @@ func logInfo(info string, extra ...interface{}) {
 		extra = make([]interface{}, 0)
 	}
 	extra = append(extra, "app", Config.App, "addr", myAddr)
-	logger.Info("Discover: "+info, extra...)
+	_logger.Info("Discover: "+info, extra...)
+}
+
+func SetLogger(logger *log.Logger) {
+	_logger = logger
 }
 
 func Init() {
-	if !inited {
-		inited = true
+	if !_inited {
+		_inited = true
 		config.LoadConfig("discover", &Config)
 
 		if Config.Registry == "" {
@@ -115,7 +119,7 @@ func Start(addr string) bool {
 
 	isServer = Config.App != "" && Config.Weight > 0
 	if isServer {
-		serverRedisPool = redis.GetRedis(Config.Registry, logger)
+		serverRedisPool = redis.GetRedis(Config.Registry, _logger)
 		if serverRedisPool.Error != nil {
 			logError(serverRedisPool.Error.Error())
 		}
@@ -189,14 +193,14 @@ func daemon() {
 
 func Restart() bool {
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(Config.Registry, logger)
+		clientRedisPool = redis.GetRedis(Config.Registry, _logger)
 	}
 
 	confForPubSub := *clientRedisPool.Config
 	confForPubSub.IdleTimeout = -1
 	confForPubSub.ReadTimeout = -1
 	if pubsubRedisPool == nil {
-		newLogger := logger.New(u.ShortUniqueId())
+		newLogger := _logger.New(u.ShortUniqueId())
 		pubsubRedisPool = redis.NewRedis(&confForPubSub, newLogger)
 	}
 
@@ -266,7 +270,7 @@ func Stop() {
 func EasyStart() (string, int) {
 	listener, err := net.Listen("tcp", os.Getenv("DISCOVER_LISTEN"))
 	if err != nil {
-		logger.Error(err.Error())
+		_logger.Error(err.Error())
 		return "", 0
 	}
 
@@ -278,10 +282,10 @@ func EasyStart() (string, int) {
 	if !ip.IsGlobalUnicast() {
 		// 如果监听的不是外部IP，使用第一个外部IP
 		addrs, _ := net.InterfaceAddrs()
-		//logger.Warning("====1", Config.IpPrefix)
+		//_logger.Warning("====1", Config.IpPrefix)
 		for _, a := range addrs {
 			an := a.(*net.IPNet)
-			//logger.Warning("====2", an.IP.To4().String())
+			//_logger.Warning("====2", an.IP.To4().String())
 			// 显式匹配网段
 			if Config.IpPrefix != "" && strings.HasPrefix(an.IP.To4().String(), Config.IpPrefix) {
 				ip = an.IP.To4()
@@ -289,13 +293,13 @@ func EasyStart() (string, int) {
 			}
 
 			// 忽略 Docker 私有网段，匹配最后一个
-			//logger.Warning("====3", an.IP.To4().String(), an.IP.IsGlobalUnicast())
+			//_logger.Warning("====3", an.IP.To4().String(), an.IP.IsGlobalUnicast())
 			if an.IP.IsGlobalUnicast() && !strings.HasPrefix(an.IP.To4().String(), "172.17.") {
 				ip = an.IP.To4()
 			}
 		}
 	}
-	//logger.Warning("====4", ip, port)
+	//_logger.Warning("====4", ip, port)
 	addr := fmt.Sprintf("%s:%d", ip.String(), port)
 
 	if Start(addr) == false {
@@ -412,7 +416,7 @@ var lastFetchTimeTag int64
 
 func fetchApp(app string) {
 	if clientRedisPool == nil {
-		clientRedisPool = redis.GetRedis(Config.Registry, logger)
+		clientRedisPool = redis.GetRedis(Config.Registry, _logger)
 	}
 
 	appResults := clientRedisPool.Do("HGETALL", app).ResultMap()
