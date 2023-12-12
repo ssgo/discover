@@ -427,9 +427,9 @@ func fetchApp(app string) {
 		lastFetchTimeTag = fetchTimeTag
 		for addr, _ := range appResults {
 			checkKey := app + "_" + addr
-			if !serverRedisPool.EXISTS(checkKey) {
+			if !clientRedisPool.EXISTS(checkKey) {
 				// 删除不存在了的节点
-				serverRedisPool.HDEL(app, addr)
+				clientRedisPool.HDEL(app, addr)
 				delete(appResults, addr)
 			}
 		}
