@@ -4,6 +4,7 @@ go 1.12
 
 require (
 	github.com/gomodule/redigo v1.8.8
+	github.com/gorilla/websocket v1.5.1
 	github.com/ssgo/config v1.7.4
 	github.com/ssgo/httpclient v1.7.4
 	github.com/ssgo/log v1.7.4

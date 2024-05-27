@@ -2,10 +2,12 @@ package discover
 
 import (
 	"fmt"
+	"github.com/gorilla/websocket"
 	"github.com/ssgo/standard"
 	"github.com/ssgo/u"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/ssgo/httpclient"
@@ -48,7 +50,35 @@ func (caller *Caller) Do(method, app, path string, data interface{}, headers ...
 	r, _ := caller.DoWithNode(method, app, "", path, data, headers...)
 	return r
 }
+func (caller *Caller) ManualDo(method, app, path string, data interface{}, headers ...string) *httpclient.Result {
+	r, _ := caller.DoWithNode(method, app, "", path, data, headers...)
+	return r
+}
+func (caller *Caller) Open(app, path string, headers ...string) *websocket.Conn {
+	r, _ := caller.doWithNode(false, "WS", app, "", path, nil, headers...)
+	if v, ok := r.(*websocket.Conn); ok {
+		return v
+	} else {
+		return nil
+	}
+}
 func (caller *Caller) DoWithNode(method, app, withNode, path string, data interface{}, headers ...string) (*httpclient.Result, string) {
+	r, nodeAddr := caller.doWithNode(false, method, app, withNode, path, data, headers...)
+	if v, ok := r.(*httpclient.Result); ok {
+		return v, nodeAddr
+	} else {
+		return nil, nodeAddr
+	}
+}
+func (caller *Caller) ManualDoWithNode(method, app, withNode, path string, data interface{}, headers ...string) (*httpclient.Result, string) {
+	r, nodeAddr := caller.doWithNode(true, method, app, withNode, path, data, headers...)
+	if v, ok := r.(*httpclient.Result); ok {
+		return v, nodeAddr
+	} else {
+		return nil, nodeAddr
+	}
+}
+func (caller *Caller) doWithNode(manualDo bool, method, app, withNode, path string, data interface{}, headers ...string) (interface{}, string) {
 	callerHeaders := map[string]string{}
 	if headers != nil {
 		for i := 1; i < len(headers); i += 2 {
@@ -70,6 +100,7 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 	}
 
 	var r *httpclient.Result
+	var r2Conn *websocket.Conn
 	appClient := AppClient{Logger: caller.logger, App: app, Method: method, Path: path, Data: &callData, Headers: &callerHeaders}
 	if settedRoute != nil {
 		settedRoute(&appClient, caller.Request)
@@ -108,10 +139,39 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 			if appClientPools[app].NoBody != caller.NoBody {
 				appClientPools[app].NoBody = caller.NoBody
 			}
-			if caller.Request == nil {
-				r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+
+			if strings.ToLower(method) == "WS" {
+				reqHeader := http.Header{}
+				if settedHeaders != nil {
+					for i := 1; i < len(settedHeaders); i += 2 {
+						reqHeader.Set(settedHeaders[i-1], settedHeaders[i])
+					}
+				}
+				if scheme == "https" {
+					scheme = "wss"
+				} else {
+					scheme = "ws"
+				}
+				conn, r2Resp, r2Err := websocket.DefaultDialer.Dial(fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), reqHeader)
+				r2Conn = conn
+				r = &httpclient.Result{
+					Error:    r2Err,
+					Response: r2Resp,
+				}
 			} else {
-				r = appClientPools[app].DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+				if caller.Request == nil {
+					if manualDo {
+						r = appClientPools[app].ManualDo(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+					} else {
+						r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+					}
+				} else {
+					if manualDo {
+						r = appClientPools[app].ManualDoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+					} else {
+						r = appClientPools[app].DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+					}
+				}
 			}
 			settedLoadBalancer.Response(&appClient, node, r.Error, r.Response, startTime.UnixNano()-time.Now().UnixNano())
 			if r.Error != nil || r.Response.StatusCode == 502 || r.Response.StatusCode == 503 || r.Response.StatusCode == 504 {
@@ -159,11 +219,21 @@ func (caller *Caller) DoWithNode(method, app, withNode, path string, data interf
 				}
 			} else {
 				// 成功
-				return r, node.Addr
+				if strings.ToLower(method) == "WS" {
+					return r2Conn, node.Addr
+				} else {
+					return r, node.Addr
+				}
 			}
 		}
 	}
 
 	// 全部失败，返回最后一个失败的结果
-	return &httpclient.Result{Error: fmt.Errorf("CALL	%s	%s	No node avaliable	(%d / %d)", app, path, appClient.tryTimes, len(getAppNodes(app)))}, ""
+	errStr := fmt.Errorf("CALL	%s	%s	%s	No node avaliable	(%d / %d)", method, app, path, appClient.tryTimes, len(getAppNodes(app)))
+	if strings.ToLower(method) == "WS" {
+		caller.logger.Error(errStr.Error())
+		return nil, ""
+	} else {
+		return &httpclient.Result{Error: errStr}, ""
+	}
 }

@@ -266,7 +266,7 @@ func Stop() {
 	}
 }
 
-//外部框架使用discover
+// 外部框架使用discover
 func EasyStart() (string, int) {
 	listener, err := net.Listen("tcp", os.Getenv("DISCOVER_LISTEN"))
 	if err != nil {
@@ -347,6 +347,14 @@ func AddExternalApp(app string, callConf string) bool {
 	return addApp(app, callConf, true)
 }
 
+func AddExternalAppManually(app string, callConf string) bool {
+	return addApp(app, callConf, false)
+}
+
+func SetNode(app, addr string, weight int) {
+	pushNode(app, addr, weight)
+}
+
 var numberMatcher, _ = regexp.Compile("^\\d+(s|ms|us|µs|ns?)?$")
 var appLock = sync.RWMutex{}
 
@@ -373,6 +381,15 @@ func addApp(app string, callConf string, fetch bool) bool {
 			callInfo.HttpVersion = u.Int(v)
 		} else if v == "s" {
 			callInfo.SSL = true
+		} else if v == "http" {
+			callInfo.HttpVersion = 1
+			callInfo.SSL = false
+		} else if v == "https" {
+			callInfo.HttpVersion = 2
+			callInfo.SSL = true
+		} else if v == "h2c" {
+			callInfo.HttpVersion = 2
+			callInfo.SSL = false
 		} else if numberMatcher.MatchString(v) {
 			callInfo.Timeout = u.Duration(v)
 		} else {
@@ -452,7 +469,7 @@ func fetchApp(app string) {
 	}
 }
 
-func getAppNodes(app string) map[string]*NodeInfo{
+func getAppNodes(app string) map[string]*NodeInfo {
 	appLock.RLock()
 	nodes := map[string]*NodeInfo{}
 	for k, v := range _appNodes[app] {
