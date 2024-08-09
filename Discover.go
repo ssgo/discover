@@ -67,7 +67,7 @@ func IsClient() bool {
 	return isClient
 }
 
-var _logger = log.New(u.ShortUniqueId())
+var _logger = log.DefaultLogger
 var _inited = false
 
 func logError(error string, extra ...interface{}) {
@@ -110,6 +110,8 @@ func Init() {
 		if Config.Weight <= 0 {
 			Config.Weight = 100
 		}
+
+		_logger = log.New(u.ShortUniqueId())
 	}
 }
 
@@ -344,7 +346,13 @@ func Wait() {
 }
 
 func AddExternalApp(app string, callConf string) bool {
-	return addApp(app, callConf, true)
+	if addApp(app, callConf, true) {
+		if isClient == false {
+			Restart()
+		}
+		return true
+	}
+	return false
 }
 
 func AddExternalAppManually(app string, callConf string) bool {
