@@ -34,9 +34,9 @@ func (appClient *AppClient) CheckApp(app string) bool {
 		if !addApp(app, "", true) {
 			appClient.logError("app not found", "app", app, "calls", Config.Calls)
 			return false
-		} else {
-			// 新app，重启订阅
-			Restart()
+			//} else {
+			//	// 新app，重启订阅
+			//	Restart()
 		}
 	}
 	return true

@@ -136,8 +136,11 @@ func (caller *Caller) doWithNode(manualDo bool, method, app, withNode, path stri
 			if callInfo != nil && callInfo.SSL {
 				scheme += "s"
 			}
-			if appClientPools[app].NoBody != caller.NoBody {
-				appClientPools[app].NoBody = caller.NoBody
+			appLock.RLock()
+			appHC := appClientPools[app]
+			appLock.RUnlock()
+			if appHC.NoBody != caller.NoBody {
+				appHC.NoBody = caller.NoBody
 			}
 
 			if strings.ToLower(method) == "WS" {
@@ -161,15 +164,15 @@ func (caller *Caller) doWithNode(manualDo bool, method, app, withNode, path stri
 			} else {
 				if caller.Request == nil {
 					if manualDo {
-						r = appClientPools[app].ManualDo(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+						r = appHC.ManualDo(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
 					} else {
-						r = appClientPools[app].Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+						r = appHC.Do(method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
 					}
 				} else {
 					if manualDo {
-						r = appClientPools[app].ManualDoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+						r = appHC.ManualDoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
 					} else {
-						r = appClientPools[app].DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
+						r = appHC.DoByRequest(caller.Request, method, fmt.Sprintf("%s://%s%s", scheme, node.Addr, path), data, settedHeaders...)
 					}
 				}
 			}

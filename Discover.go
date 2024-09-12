@@ -57,7 +57,9 @@ type NodeInfo struct {
 
 var settedRoute func(*AppClient, *http.Request) = nil
 var settedLoadBalancer LoadBalancer = &DefaultLoadBalancer{}
-var appSubscribeKeys []interface{}
+
+// var appSubscribeKeys []interface{}
+var appSubscribed = map[string]bool{}
 var appClientPools = map[string]*httpclient.ClientPool{}
 
 func IsServer() bool {
@@ -83,7 +85,11 @@ func logInfo(info string, extra ...interface{}) {
 		extra = make([]interface{}, 0)
 	}
 	extra = append(extra, "app", Config.App, "addr", myAddr)
-	_logger.Info("Discover: "+info, extra...)
+	if strings.HasPrefix(info, "ERR") {
+		_logger.Error("Discover: "+info, extra...)
+	} else {
+		_logger.Info("Discover: "+info, extra...)
+	}
 }
 
 func SetLogger(logger *log.Logger) {
@@ -140,11 +146,12 @@ func Start(addr string) bool {
 		}
 	}
 
-	if Config.Calls != nil && len(Config.Calls) > 0 {
-		for app, conf := range Config.Calls {
+	calls := getCalls()
+	if len(calls) > 0 {
+		for app, conf := range calls {
 			addApp(app, conf, false)
 		}
-		if Restart() == false {
+		if startSub() == false {
 			return false
 		}
 	}
@@ -193,7 +200,12 @@ func daemon() {
 	}
 }
 
-func Restart() bool {
+func startSub() bool {
+	if syncerRunning {
+		return true
+	}
+	syncerRunning = true
+
 	if clientRedisPool == nil {
 		clientRedisPool = redis.GetRedis(Config.Registry, _logger)
 	}
@@ -210,29 +222,29 @@ func Restart() bool {
 		isClient = true
 	}
 
-	// 如果之前已经启动
-	if syncConn != nil {
-		logInfo("stopping", "appSubscribeKeys", appSubscribeKeys)
-		//log.Print("DISCOVER	stopping")
-		_ = syncConn.Unsubscribe(appSubscribeKeys)
-		_ = syncConn.Close()
-		syncConn = nil
-		logInfo("stopped", "appSubscribeKeys", appSubscribeKeys)
-		//log.Print("DISCOVER	stopped")
-	}
+	//// 如果之前已经启动
+	//if syncConn != nil {
+	//	logInfo("stopping", "appSubscribeKeys", appSubscribeKeys)
+	//	//log.Print("DISCOVER	stopping")
+	//	_ = syncConn.Unsubscribe(appSubscribeKeys)
+	//	go func() {
+	//		_ = syncConn.Close()
+	//		syncConn = nil
+	//	}()
+	//	logInfo("stopped", "appSubscribeKeys", appSubscribeKeys)
+	//	//log.Print("DISCOVER	stopped")
+	//}
 
 	// 如果之前没有启动
-	if syncerRunning == false {
-		logInfo("starting", "appSubscribeKeys", appSubscribeKeys)
-		//log.Print("DISCOVER	starting")
-		syncerRunning = true
-		initedChan := make(chan bool)
-		go syncDiscover(initedChan)
-		<-initedChan
-		//go pingRedis()
-		logInfo("started", "appSubscribeKeys", appSubscribeKeys)
-		//log.Print("DISCOVER	started")
-	}
+	//logInfo("starting", "appSubscribeKeys", appSubscribeKeys)
+	//log.Print("DISCOVER	starting")
+
+	syncerStartChan := make(chan bool)
+	go syncDiscover(syncerStartChan)
+	<-syncerStartChan
+	//go pingRedis()
+	//logInfo("started", "appSubscribeKeys", appSubscribeKeys)
+	//log.Print("DISCOVER	started")
 	return true
 }
 
@@ -240,16 +252,16 @@ func Stop() {
 	if isClient {
 		syncerRunning = false
 		if syncConn != nil {
-			logInfo("unsubscribing", "appSubscribeKeys", appSubscribeKeys)
+			logInfo("unsubscribing", "appSubscribed", appSubscribed)
 			tmpConn := syncConn
 			syncConn = nil
-			//log.Print("DISCOVER	unsubscribing	", appSubscribeKeys)
-			_ = tmpConn.Unsubscribe(appSubscribeKeys)
-			logInfo("closing sync connection", "appSubscribeKeys", appSubscribeKeys)
+			//log.Print("DISCOVER	unsubscribing	", appSubscribed)
+			_ = tmpConn.Unsubscribe(appSubscribed)
+			logInfo("closing sync connection", "appSubscribed", appSubscribed)
 			//log.Print("DISCOVER	closing syncConn")
 			go func() {
 				_ = tmpConn.Close()
-				logInfo("sync connection closed", "appSubscribeKeys", appSubscribeKeys)
+				logInfo("sync connection closed", "appSubscribed", appSubscribed)
 				//syncerStopChan <- true
 				//pingStopChan <- true
 				//log.Print("DISCOVER	closed syncConn")
@@ -261,7 +273,7 @@ func Stop() {
 		daemonRunning = false
 		if serverRedisPool.HDEL(Config.App, myAddr) > 0 {
 			serverRedisPool.DEL(Config.App + "_" + myAddr)
-			logInfo("unregistered", "appSubscribeKeys", appSubscribeKeys)
+			logInfo("unregistered", "appSubscribed", appSubscribed)
 			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", Config.App, myAddr, 0)
 			serverRedisPool.Do("PUBLISH", "CH_"+Config.App, fmt.Sprintf("%s %d", myAddr, 0))
 		}
@@ -347,8 +359,8 @@ func Wait() {
 
 func AddExternalApp(app string, callConf string) bool {
 	if addApp(app, callConf, true) {
-		if isClient == false {
-			Restart()
+		if !syncerRunning {
+			startSub()
 		}
 		return true
 	}
@@ -374,7 +386,12 @@ func getCallInfo(app string) *callInfoType {
 }
 
 func addApp(app string, callConf string, fetch bool) bool {
-	if appClientPools[app] != nil {
+	appLock.RLock()
+	oldConf, oldExists := Config.Calls[app]
+	oldHC := appClientPools[app]
+	appLock.RUnlock()
+
+	if oldExists && callConf == oldConf && oldHC != nil {
 		return false
 	}
 
@@ -412,6 +429,12 @@ func addApp(app string, callConf string, fetch bool) bool {
 		cp = httpclient.GetClientH2C(callInfo.Timeout)
 	}
 
+	if !appSubscribed[app] && syncConn != nil {
+		if err := syncConn.Subscribe("CH_" + app); err != nil {
+			logError("failed to subscribe", "app", app, "err", err.Error())
+		}
+	}
+
 	appLock.Lock()
 	if Config.Calls == nil {
 		Config.Calls = make(map[string]string)
@@ -419,7 +442,8 @@ func addApp(app string, callConf string, fetch bool) bool {
 	Config.Calls[app] = callConf
 
 	_appNodes[app] = map[string]*NodeInfo{}
-	appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
+	appSubscribed[app] = true
+	//appSubscribeKeys = append(appSubscribeKeys, "CH_"+app)
 
 	_calls[app] = &callInfo
 
@@ -487,22 +511,49 @@ func getAppNodes(app string) map[string]*NodeInfo {
 	return nodes
 }
 
-func syncDiscover(initedChan chan bool) {
-	inited := false
+func getAppSubscribeKeys() []any {
+	appLock.RLock()
+	appSubscribeKeys := make([]interface{}, len(appSubscribed))
+	for appName, _ := range appSubscribed {
+		appSubscribeKeys = append(appSubscribeKeys, "CH_"+appName)
+	}
+	appLock.RUnlock()
+	return appSubscribeKeys
+}
+
+func getCalls() map[string]string {
+	calls := map[string]string{}
+	appLock.RLock()
+	if Config.Calls != nil {
+		for k, v := range Config.Calls {
+			calls[k] = v
+		}
+	}
+	appLock.RUnlock()
+	return calls
+}
+
+func syncDiscover(syncerStartChan chan bool) {
+	if len(appSubscribed) == 0 {
+		syncerStartChan <- true
+		return
+	}
+
+	started := false
 	for {
 		syncConn = &redigo.PubSubConn{Conn: pubsubRedisPool.GetConnection()}
+		appSubscribeKeys := getAppSubscribeKeys()
 		err := syncConn.Subscribe(appSubscribeKeys...)
 		if err != nil {
+			syncerStartChan <- true
 			logError(err.Error(), "appSubscribeKeys", appSubscribeKeys)
 			//log.Print("REDIS SUBSCRIBE	", err)
 			_ = syncConn.Close()
 			syncConn = nil
 
-			if !inited {
+			if !started {
 				logInfo("sync thread started")
-
-				inited = true
-				initedChan <- true
+				started = true
 			}
 			time.Sleep(time.Millisecond * 500)
 			if !syncerRunning {
@@ -512,12 +563,13 @@ func syncDiscover(initedChan chan bool) {
 		}
 
 		// 第一次或断线后重新获取（订阅开始后再获取全量确保信息完整）
-		for app := range Config.Calls {
+		calls := getCalls()
+		for app := range calls {
 			fetchApp(app)
 		}
-		if !inited {
-			inited = true
-			initedChan <- true
+		syncerStartChan <- true
+		if !started {
+			started = true
 		}
 		if !syncerRunning {
 			break
@@ -544,7 +596,7 @@ func syncDiscover(initedChan chan bool) {
 				//log.Print("	-0-0-0-0-0-0-	Pong")
 			case error:
 				if !strings.Contains(v.Error(), "connection closed") {
-					logInfo(v.Error(), "appSubscribeKeys", appSubscribeKeys)
+					logError(v.Error(), "appSubscribeKeys", appSubscribeKeys)
 					//log.Printf("REDIS RECEIVE ERROR	%s", v)
 				}
 				isErr = true
@@ -567,6 +619,7 @@ func syncDiscover(initedChan chan bool) {
 	}
 
 	if syncConn != nil {
+		appSubscribeKeys := getAppSubscribeKeys()
 		_ = syncConn.Unsubscribe(appSubscribeKeys)
 		//考虑goroutine的并发性，再做一次判断
 		if syncConn != nil {
@@ -590,7 +643,7 @@ func pushNode(app, addr string, weight int) {
 	if weight == 0 {
 		// 删除节点
 		appLock.Lock()
-		if _appNodes[app][addr] != nil {
+		if _appNodes[app] != nil && _appNodes[app][addr] != nil {
 			delete(_appNodes[app], addr)
 		}
 		appLock.Unlock()
@@ -603,6 +656,9 @@ func pushNode(app, addr string, weight int) {
 		}
 		usedTimes := uint64(avgScore) * uint64(weight)
 		appLock.Lock()
+		if _appNodes[app] == nil {
+			_appNodes[app] = map[string]*NodeInfo{}
+		}
 		_appNodes[app][addr] = &NodeInfo{Addr: addr, Weight: weight, UsedTimes: usedTimes, Data: sync.Map{}}
 		appLock.Unlock()
 	} else if nodes[addr].Weight != weight {
@@ -611,6 +667,9 @@ func pushNode(app, addr string, weight int) {
 		node.Weight = weight
 		node.UsedTimes = uint64(float64(node.UsedTimes) / float64(node.Weight) * float64(weight))
 		appLock.Lock()
+		if _appNodes[app] == nil {
+			_appNodes[app] = map[string]*NodeInfo{}
+		}
 		_appNodes[app][addr] = node
 		appLock.Unlock()
 	}
