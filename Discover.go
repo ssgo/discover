@@ -2,10 +2,6 @@ package discover
 
 import (
 	"fmt"
-	"github.com/ssgo/config"
-	"github.com/ssgo/log"
-	"github.com/ssgo/standard"
-	"github.com/ssgo/u"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +12,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/ssgo/config"
+	"github.com/ssgo/log"
+	"github.com/ssgo/u"
 
 	redigo "github.com/gomodule/redigo/redis"
 	"github.com/ssgo/httpclient"
@@ -101,9 +101,9 @@ func Init() {
 		_inited = true
 		config.LoadConfig("discover", &Config)
 
-		if Config.Registry == "" {
-			Config.Registry = standard.DiscoverDefaultRegistry // 127.0.0.1:6379::15
-		}
+		// if Config.Registry == "" && (Config.App != "" || Config.Calls != nil) {
+		// 	Config.Registry = standard.DiscoverDefaultRegistry // 127.0.0.1:6379::15
+		// }
 		if Config.CallRetryTimes <= 0 {
 			Config.CallRetryTimes = 10
 		}
@@ -126,7 +126,7 @@ func Start(addr string) bool {
 	myAddr = addr
 
 	isServer = Config.App != "" && Config.Weight > 0
-	if isServer {
+	if isServer && Config.Registry != "" {
 		serverRedisPool = redis.GetRedis(Config.Registry, _logger)
 		if serverRedisPool.Error != nil {
 			logError(serverRedisPool.Error.Error())
@@ -151,7 +151,7 @@ func Start(addr string) bool {
 		for app, conf := range calls {
 			addApp(app, conf, false)
 		}
-		if startSub() == false {
+		if !startSub() {
 			return false
 		}
 	}
@@ -172,7 +172,7 @@ func daemon() {
 		if !daemonRunning {
 			break
 		}
-		if isServer {
+		if isServer && serverRedisPool != nil {
 			if !serverRedisPool.HEXISTS(Config.App, myAddr) {
 				logInfo("lost app registered info")
 				// 注册节点
@@ -201,6 +201,9 @@ func daemon() {
 }
 
 func startSub() bool {
+	if Config.Registry == "" {
+		return true
+	}
 	if syncerRunning {
 		return true
 	}
@@ -271,7 +274,7 @@ func Stop() {
 
 	if isServer {
 		daemonRunning = false
-		if serverRedisPool.HDEL(Config.App, myAddr) > 0 {
+		if serverRedisPool != nil && serverRedisPool.HDEL(Config.App, myAddr) > 0 {
 			serverRedisPool.DEL(Config.App + "_" + myAddr)
 			logInfo("unregistered", "appSubscribed", appSubscribed)
 			//log.Printf("DISCOVER	Unregistered	%s	%s	%d", Config.App, myAddr, 0)
@@ -464,6 +467,9 @@ var syncConn *redigo.PubSubConn
 var lastFetchTimeTag int64
 
 func fetchApp(app string) {
+	if Config.Registry == "" {
+		return
+	}
 	if clientRedisPool == nil {
 		clientRedisPool = redis.GetRedis(Config.Registry, _logger)
 	}
@@ -539,96 +545,98 @@ func syncDiscover(syncerStartChan chan bool) {
 		return
 	}
 
-	started := false
-	for {
-		syncConn = &redigo.PubSubConn{Conn: pubsubRedisPool.GetConnection()}
-		appSubscribeKeys := getAppSubscribeKeys()
-		err := syncConn.Subscribe(appSubscribeKeys...)
-		if err != nil {
-			syncerStartChan <- true
-			logError(err.Error(), "appSubscribeKeys", appSubscribeKeys)
-			//log.Print("REDIS SUBSCRIBE	", err)
-			_ = syncConn.Close()
-			syncConn = nil
+	if pubsubRedisPool != nil {
+		started := false
+		for {
+			syncConn = &redigo.PubSubConn{Conn: pubsubRedisPool.GetConnection()}
+			appSubscribeKeys := getAppSubscribeKeys()
+			err := syncConn.Subscribe(appSubscribeKeys...)
+			if err != nil {
+				syncerStartChan <- true
+				logError(err.Error(), "appSubscribeKeys", appSubscribeKeys)
+				//log.Print("REDIS SUBSCRIBE	", err)
+				_ = syncConn.Close()
+				syncConn = nil
 
+				if !started {
+					logInfo("sync thread started")
+					started = true
+				}
+				time.Sleep(time.Millisecond * 500)
+				if !syncerRunning {
+					break
+				}
+				continue
+			}
+
+			// 第一次或断线后重新获取（订阅开始后再获取全量确保信息完整）
+			calls := getCalls()
+			for app := range calls {
+				fetchApp(app)
+			}
+			syncerStartChan <- true
 			if !started {
-				logInfo("sync thread started")
 				started = true
+			}
+			if !syncerRunning {
+				break
+			}
+
+			// 开始接收订阅数据
+			for {
+				isErr := false
+				receiveObj := syncConn.Receive()
+				switch v := receiveObj.(type) {
+				case redigo.Message:
+					a := strings.Split(string(v.Data), " ")
+					addr := a[0]
+					weight := 0
+					if len(a) == 2 {
+						weight, _ = strconv.Atoi(a[1])
+					}
+					app := strings.Replace(v.Channel, "CH_", "", 1)
+					logInfo("received new registered info", "nodes", getAppNodes(app), "appSubscribeKeys", appSubscribeKeys)
+					//log.Printf("DISCOVER	Received	%s	%s	%d", app, addr, weight)
+					pushNode(app, addr, weight)
+				case redigo.Subscription:
+				case redigo.Pong:
+					//log.Print("	-0-0-0-0-0-0-	Pong")
+				case error:
+					if !strings.Contains(v.Error(), "connection closed") {
+						logError(v.Error(), "appSubscribeKeys", appSubscribeKeys)
+						//log.Printf("REDIS RECEIVE ERROR	%s", v)
+					}
+					isErr = true
+					break
+				}
+				if isErr {
+					break
+				}
+				if !syncerRunning {
+					break
+				}
+			}
+			if !syncerRunning {
+				break
 			}
 			time.Sleep(time.Millisecond * 500)
 			if !syncerRunning {
 				break
 			}
-			continue
 		}
 
-		// 第一次或断线后重新获取（订阅开始后再获取全量确保信息完整）
-		calls := getCalls()
-		for app := range calls {
-			fetchApp(app)
-		}
-		syncerStartChan <- true
-		if !started {
-			started = true
-		}
-		if !syncerRunning {
-			break
-		}
-
-		// 开始接收订阅数据
-		for {
-			isErr := false
-			receiveObj := syncConn.Receive()
-			switch v := receiveObj.(type) {
-			case redigo.Message:
-				a := strings.Split(string(v.Data), " ")
-				addr := a[0]
-				weight := 0
-				if len(a) == 2 {
-					weight, _ = strconv.Atoi(a[1])
-				}
-				app := strings.Replace(v.Channel, "CH_", "", 1)
-				logInfo("received new registered info", "nodes", getAppNodes(app), "appSubscribeKeys", appSubscribeKeys)
-				//log.Printf("DISCOVER	Received	%s	%s	%d", app, addr, weight)
-				pushNode(app, addr, weight)
-			case redigo.Subscription:
-			case redigo.Pong:
-				//log.Print("	-0-0-0-0-0-0-	Pong")
-			case error:
-				if !strings.Contains(v.Error(), "connection closed") {
-					logError(v.Error(), "appSubscribeKeys", appSubscribeKeys)
-					//log.Printf("REDIS RECEIVE ERROR	%s", v)
-				}
-				isErr = true
-				break
-			}
-			if isErr {
-				break
-			}
-			if !syncerRunning {
-				break
-			}
-		}
-		if !syncerRunning {
-			break
-		}
-		time.Sleep(time.Millisecond * 500)
-		if !syncerRunning {
-			break
-		}
-	}
-
-	if syncConn != nil {
-		appSubscribeKeys := getAppSubscribeKeys()
-		_ = syncConn.Unsubscribe(appSubscribeKeys)
-		//考虑goroutine的并发性，再做一次判断
 		if syncConn != nil {
-			_ = syncConn.Close()
-			syncConn = nil
+			appSubscribeKeys := getAppSubscribeKeys()
+			_ = syncConn.Unsubscribe(appSubscribeKeys)
+			//考虑goroutine的并发性，再做一次判断
+			if syncConn != nil {
+				_ = syncConn.Close()
+				syncConn = nil
+			}
 		}
-	}
 
-	logInfo("sync thread stopped")
+		logInfo("sync thread stopped")
+	}
 
 	if syncerStopChan != nil {
 		syncerStopChan <- true

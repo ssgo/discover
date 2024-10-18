@@ -2,13 +2,14 @@ package discover
 
 import (
 	"fmt"
-	"github.com/gorilla/websocket"
-	"github.com/ssgo/standard"
-	"github.com/ssgo/u"
 	"net/http"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/ssgo/standard"
+	"github.com/ssgo/u"
 
 	"github.com/ssgo/httpclient"
 	"github.com/ssgo/log"
@@ -216,7 +217,7 @@ func (caller *Caller) doWithNode(manualDo bool, method, app, withNode, path stri
 						"statusCode", statusCode,
 					)
 					//log.Printf("DISCOVER	Removed	%s	%s	%d	%d	%d / %d	%d / %d	%d	%s", node.Addr, path, node.Weight, node.UsedTimes, appClient.tryTimes, len(appNodes[app]), node.FailedTimes, Config.CallRetryTimes, statusCode, r.Error)
-					if clientRedisPool.HDEL(app, node.Addr) > 0 {
+					if clientRedisPool != nil && clientRedisPool.HDEL(app, node.Addr) > 0 {
 						clientRedisPool.Do("PUBLISH", "CH_"+app, fmt.Sprintf("%s %d", node.Addr, 0))
 					}
 				}
