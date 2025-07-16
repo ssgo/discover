@@ -547,10 +547,13 @@ func syncDiscover(syncerStartChan chan bool) {
 
 	if pubsubRedisPool != nil {
 		started := false
+		appSubscribeKeys := getAppSubscribeKeys()
 		for {
-			syncConn = &redigo.PubSubConn{Conn: pubsubRedisPool.GetConnection()}
-			appSubscribeKeys := getAppSubscribeKeys()
-			err := syncConn.Subscribe(appSubscribeKeys...)
+			conn, err := pubsubRedisPool.GetConnection()
+			if err == nil {
+				syncConn = &redigo.PubSubConn{Conn: conn}
+				err = syncConn.Subscribe(appSubscribeKeys...)
+			}
 			if err != nil {
 				syncerStartChan <- true
 				logError(err.Error(), "appSubscribeKeys", appSubscribeKeys)
